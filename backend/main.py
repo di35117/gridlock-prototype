@@ -1,80 +1,66 @@
+"""
+BTP Event Intelligence Platform — FastAPI entry point.
+Boots the data foundation (CSV → DB) and trains the impact forecaster
+(if not already trained) on startup.
+"""
+
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
-from database import init_db
-from modules.data_foundation.service import initialize_data_foundation
-from modules.data_foundation.router import router as data_router
+load_dotenv()
 
-# ── Logging ───────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main")
+
+from database import init_db
+from modules.data_foundation import service as data_foundation_service
+from modules.data_foundation.router import router as data_foundation_router
+from modules.impact_forecaster import trainer as forecaster_trainer
+from modules.impact_forecaster.router import router as impact_forecaster_router
 
 
-# ── Startup / shutdown ────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("━━━ BTP Event Intelligence — starting up ━━━")
 
-    # 1. Create all tables (if they don't exist)
     await init_db()
     logger.info("Database tables ready")
 
-    # 2. Load ASTRAM data + compute profiles (skips if already loaded)
-    result = await initialize_data_foundation()
-    logger.info(f"Data foundation: {result}")
+    df_result = await data_foundation_service.initialize_data_foundation()
+    logger.info(f"Data foundation: {df_result}")
+
+    if not forecaster_trainer.models_exist():
+        logger.info("No trained forecaster models found — training now …")
+        metrics = await forecaster_trainer.train_and_save()
+        logger.info(f"Impact Forecaster trained: {metrics}")
+    else:
+        logger.info("Impact Forecaster models already trained — skipping.")
 
     logger.info("━━━ Startup complete — ready to serve ━━━")
     yield
     logger.info("━━━ Shutting down ━━━")
 
 
-# ── App ───────────────────────────────────────────────────────
-app = FastAPI(
-    title="BTP Event Intelligence Platform",
-    version="1.0.0",
-    description=(
-        "Compound conflict detection, event impact forecasting, "
-        "resource recommendations, surge detection, and autonomous "
-        "post-event learning for Bengaluru Traffic Police."
-    ),
-    lifespan=lifespan,
-)
+app = FastAPI(title="BTP Event Intelligence Platform", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
-    allow_credentials=True,
+    allow_origins=["http://localhost:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ───────────────────────────────────────────────────
-app.include_router(data_router)
-
-# More routers will be added here as modules are built:
-# app.include_router(forecast_router)
-# app.include_router(conflict_router)
-# app.include_router(recommend_router)
-# app.include_router(surge_router)
-# app.include_router(copilot_router)
-# app.include_router(learning_router)
+app.include_router(data_foundation_router)
+app.include_router(impact_forecaster_router)
 
 
-# ── Health check ──────────────────────────────────────────────
-@app.get("/health", tags=["System"])
+@app.get("/health")
 async def health():
-    return {
-        "status":  "ok",
-        "service": "BTP Event Intelligence Platform",
-        "version": "1.0.0",
-    }
+    return {"status": "ok", "service": "BTP Event Intelligence"}

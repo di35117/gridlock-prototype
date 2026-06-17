@@ -9,7 +9,7 @@ class Incident(Base):
     """Raw ASTRAM incident data — all 8,173 rows from the CSV."""
     __tablename__ = "incidents"
 
-    id               = Column(Integer, primary_key=True)          # from CSV
+    id = Column(String(50), primary_key=True)          # from CSV
     event_type       = Column(String(50),  index=True)            # planned / unplanned
     event_cause      = Column(String(100), index=True)            # public_event, construction …
     start_datetime   = Column(DateTime,    nullable=True)

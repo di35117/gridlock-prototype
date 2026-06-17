@@ -21,6 +21,13 @@ _priority_model = None
 _closure_model = None
 _encoders = None
 
+# corridor_risk_score in corridor_risk_profiles is NOT 0-1 (it runs roughly
+# 3.0-3.8 in the current data) — this caches the real min/max from the table
+# so it can be normalized before going into the compound score below.
+# Reset to None if corridor_risk_profiles is ever reloaded while the server
+# is running.
+_risk_score_bounds: tuple[float, float] | None = None
+
 
 def _ensure_models_loaded() -> None:
     global _priority_model, _closure_model, _encoders
@@ -81,6 +88,34 @@ async def _get_cause_context(event_cause: str) -> dict:
     }
 
 
+async def _get_risk_score_bounds() -> tuple[float, float]:
+    """Min/max of risk_score across corridor_risk_profiles, cached after the first call."""
+    global _risk_score_bounds
+    if _risk_score_bounds is not None:
+        return _risk_score_bounds
+
+    query = text(
+        "SELECT MIN(risk_score) AS min_score, MAX(risk_score) AS max_score FROM corridor_risk_profiles"
+    )
+    async with engine.connect() as conn:
+        result = await conn.execute(query)
+        row = result.fetchone()
+
+    min_score = float(row.min_score if row and row.min_score is not None else 0.0)
+    max_score = float(row.max_score if row and row.max_score is not None else 1.0)
+    if max_score <= min_score:
+        max_score = min_score + 1.0  # guard against divide-by-zero if every corridor ties
+
+    _risk_score_bounds = (min_score, max_score)
+    return _risk_score_bounds
+
+
+def _normalize_risk_score(raw_score: float, bounds: tuple[float, float]) -> float:
+    min_score, max_score = bounds
+    normalized = (raw_score - min_score) / (max_score - min_score)
+    return max(0.0, min(1.0, normalized))
+
+
 def _classify_risk_level(compound_score: float) -> str:
     if compound_score >= 0.75:
         return "Critical"
@@ -111,6 +146,8 @@ async def predict(
 
     corridor_ctx = await _get_corridor_context(corridor)
     cause_ctx = await _get_cause_context(event_cause)
+    risk_bounds = await _get_risk_score_bounds()
+    normalized_corridor_risk = _normalize_risk_score(corridor_ctx["risk_score"], risk_bounds)
 
     row = pd.DataFrame([{
         "event_cause": event_cause,
@@ -135,10 +172,12 @@ async def predict(
     # Blends the model's own confidence with the corridor's empirical track
     # record — this is what lets a corridor with a bad history (e.g. Mysore
     # Road) still surface as high-risk even if the model itself is unsure.
+    # corridor_risk_score is normalized to 0-1 first since the raw value
+    # runs ~3.0-3.8, not 0-1 — see _get_risk_score_bounds above.
     compound_score = (
         0.4 * priority_proba
         + 0.3 * closure_proba
-        + 0.3 * corridor_ctx["risk_score"]
+        + 0.3 * normalized_corridor_risk
     )
     risk_level = _classify_risk_level(compound_score)
 

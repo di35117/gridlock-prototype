@@ -1,24 +1,22 @@
 """
-AI Copilot Service (Hugging Face Edition).
+AI Copilot Service (Gemini Edition).
 Gathers context from the Impact Forecaster and Compound Conflict Detector,
-then uses a free open-source model to generate a tactical operational order.
+then uses Gemini 1.5 Flash to generate a tactical operational order.
 """
 import logging
-from huggingface_hub import AsyncInferenceClient
+import google.generativeai as genai
 from sqlalchemy import text
 
-from config import HUGGINGFACE_API_KEY
+from config import GEMINI_API_KEY
 from database import engine
 from modules.impact_forecaster.service import predict
 from modules.compound_conflict.service import detect_conflict
 
 logger = logging.getLogger(__name__)
 
-# Initialize async client using a strong, free instruction-tuned model
-client = AsyncInferenceClient(
-    model="HuggingFaceH4/zephyr-7b-beta",
-    token=HUGGINGFACE_API_KEY
-)
+# Configure Gemini SDK
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 async def _get_historical_stations(corridor: str) -> list[str]:
     """Fetch which stations historically handle this corridor."""
@@ -47,7 +45,7 @@ async def generate_operational_order(
     warnings_str = "\n".join([f"- {w}" for w in conflict["warnings"]]) if conflict["warnings"] else "None"
 
     # 2. Build the System Prompt Context
-    system_prompt = f"""
+    prompt = f"""
     You are an expert Traffic Operations Commander for the Bengaluru Traffic Police (BTP).
     Your task is to draft a structured, highly actionable Operational Order for an upcoming event.
     
@@ -79,19 +77,11 @@ async def generate_operational_order(
     Keep it concise, authoritative, and formatted for quick reading by field officers. Do not add introductory fluff.
     """
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "Generate the operational order based on the provided intelligence."}
-    ]
-
-    # 3. Call Hugging Face API
-    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using Hugging Face...")
+    # 3. Call Gemini API asynchronously
+    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using Gemini...")
     try:
-        response = await client.chat_completion(
-            messages=messages,
-            max_tokens=800,
-        )
-        return response.choices[0].message.content
+        response = await model.generate_content_async(prompt)
+        return response.text
     except Exception as e:
-        logger.error(f"Hugging Face API error: {e}")
+        logger.error(f"Gemini API error: {e}")
         return f"Error generating operational order: {str(e)}"

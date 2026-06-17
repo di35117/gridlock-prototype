@@ -185,7 +185,8 @@ async def train_and_save() -> dict:
             auc = roc_auc_score(y_v, model.predict_proba(X_v)[:, 1])
         except Exception:
             auc = None
-        logger.info(f"{name} — acc={acc:.4f}  auc={auc:.4f if auc else 'N/A'}")
+        auc_str = f"{auc:.4f}" if auc is not None else "N/A"
+        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}")
         return {"accuracy": round(acc, 4), "auc": round(auc, 4) if auc else None}
 
     priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority")

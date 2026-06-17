@@ -26,6 +26,7 @@ from modules.ai_copilot.router import router as ai_copilot_router
 from modules.surge_detector.router import router as surge_detector_router
 from modules.resource_recommender.router import router as resource_recommender_router
 from modules.learning_engine.router import router as learning_engine_router
+from modules.routing_engine.router import router as routing_engine_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -66,6 +67,7 @@ app.include_router(impact_forecaster_router)
 app.include_router(compound_conflict_router)
 app.include_router(surge_detector_router)
 app.include_router(resource_recommender_router)
+app.include_router(routing_engine_router)
 app.include_router(ai_copilot_router)
 app.include_router(learning_engine_router)
 

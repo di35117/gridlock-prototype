@@ -25,6 +25,7 @@ from modules.data_foundation.router import router as data_foundation_router
 from modules.impact_forecaster import trainer as forecaster_trainer
 from modules.impact_forecaster.router import router as impact_forecaster_router
 from modules.compound_conflict.router import router as compound_conflict_router
+from modules.ai_copilot.router import router as ai_copilot_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +61,7 @@ app.add_middleware(
 app.include_router(data_foundation_router)
 app.include_router(impact_forecaster_router)
 app.include_router(compound_conflict_router)
+app.include_router(ai_copilot_router)
 
 @app.get("/health")
 async def health():

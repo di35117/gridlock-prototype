@@ -46,9 +46,6 @@ def get_gemini_model():
         # Absolute hardcoded fallback
         return genai.GenerativeModel('models/gemini-1.5-flash')
 
-# Initialize the model dynamically on startup
-model = get_gemini_model()
-
 async def _get_historical_stations(corridor: str) -> list[str]:
     """Fetch which stations historically handle this corridor."""
     query = text("""
@@ -66,6 +63,9 @@ async def generate_operational_order(
     expected_crowd: int,
     event_details: str
 ) -> str:
+    
+    # Lazy init to prevent startup crashes before .env is loaded
+    model = get_gemini_model()
     
     # 1. Gather Intelligence
     forecast = await predict(event_cause=event_cause, corridor=corridor, hour_of_day=18, day_of_week=5)

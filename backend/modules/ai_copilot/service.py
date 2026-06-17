@@ -1,7 +1,8 @@
 """
 AI Copilot Service (Gemini Edition).
 Gathers context from the Impact Forecaster and Compound Conflict Detector,
-then uses Gemini 1.5 Flash to generate a tactical operational order.
+then uses Gemini to generate a tactical operational order.
+Includes auto-resolution for regional API key model availability.
 """
 import logging
 import google.generativeai as genai
@@ -16,7 +17,37 @@ logger = logging.getLogger(__name__)
 
 # Configure Gemini SDK
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+
+def get_gemini_model():
+    """Auto-discovers the best available model for your specific API key/region."""
+    try:
+        available_models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # 1. Try to find the optimal 1.5 Flash model
+        for m in available_models:
+            if 'gemini-1.5-flash' in m.name:
+                logger.info(f"Auto-selected model: {m.name}")
+                return genai.GenerativeModel(m.name)
+                
+        # 2. Try 1.5 Pro
+        for m in available_models:
+            if 'gemini-1.5-pro' in m.name:
+                logger.info(f"Auto-selected model: {m.name}")
+                return genai.GenerativeModel(m.name)
+                
+        # 3. Fallback to whatever text model is available
+        if available_models:
+            logger.info(f"Fallback auto-selected model: {available_models[0].name}")
+            return genai.GenerativeModel(available_models[0].name)
+            
+        raise ValueError("No valid text generation models found for this API key.")
+    except Exception as e:
+        logger.error(f"Model auto-discovery failed: {e}")
+        # Absolute hardcoded fallback
+        return genai.GenerativeModel('models/gemini-1.5-flash')
+
+# Initialize the model dynamically on startup
+model = get_gemini_model()
 
 async def _get_historical_stations(corridor: str) -> list[str]:
     """Fetch which stations historically handle this corridor."""
@@ -78,7 +109,7 @@ async def generate_operational_order(
     """
 
     # 3. Call Gemini API asynchronously
-    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using Gemini...")
+    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using {model.model_name}...")
     try:
         response = await model.generate_content_async(prompt)
         return response.text

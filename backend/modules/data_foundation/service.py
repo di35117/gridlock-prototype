@@ -40,6 +40,8 @@ def _load_and_clean_csv() -> pd.DataFrame:
     for col in ["start_datetime", "resolved_datetime", "closed_datetime"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
+            if df[col].dt.tz is not None:
+                df[col] = df[col].dt.tz_convert(None)
 
     # ── Boolean normalisation ─────────────────────────────────
     if "requires_road_closure" in df.columns:

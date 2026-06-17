@@ -1,21 +1,24 @@
 """
-AI Copilot Service.
+AI Copilot Service (Hugging Face Edition).
 Gathers context from the Impact Forecaster and Compound Conflict Detector,
-then uses Claude to generate a tactical operational order.
+then uses a free open-source model to generate a tactical operational order.
 """
 import logging
-from anthropic import AsyncAnthropic
+from huggingface_hub import AsyncInferenceClient
 from sqlalchemy import text
 
-from config import ANTHROPIC_API_KEY
+from config import HUGGINGFACE_API_KEY
 from database import engine
 from modules.impact_forecaster.service import predict
 from modules.compound_conflict.service import detect_conflict
 
 logger = logging.getLogger(__name__)
 
-# Initialize async client
-client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+# Initialize async client using a strong, free instruction-tuned model
+client = AsyncInferenceClient(
+    model="mistralai/Mistral-7B-Instruct-v0.3",
+    token=HUGGINGFACE_API_KEY
+)
 
 async def _get_historical_stations(corridor: str) -> list[str]:
     """Fetch which stations historically handle this corridor."""
@@ -35,7 +38,7 @@ async def generate_operational_order(
     event_details: str
 ) -> str:
     
-    # 1. Gather Intelligence (using defaults for hour/day to simulate a standard planned event)
+    # 1. Gather Intelligence
     forecast = await predict(event_cause=event_cause, corridor=corridor, hour_of_day=18, day_of_week=5)
     conflict = await detect_conflict(corridor=corridor, event_cause=event_cause)
     stations = await _get_historical_stations(corridor=corridor)
@@ -73,22 +76,22 @@ async def generate_operational_order(
     
     Output a professional Operational Order using Markdown. Use clear headings: 
     1. Threat Assessment, 2. Station Deployment, 3. Barricading & Diversion Strategy, and 4. Action Checklist.
-    Do NOT invent fake officer counts; instead refer to 'Standard Tiered Deployment' based on the risk score.
-    Keep it concise, authoritative, and formatted for quick reading by field officers.
+    Keep it concise, authoritative, and formatted for quick reading by field officers. Do not add introductory fluff.
     """
 
-    # 3. Call Claude API
-    logger.info(f"Generating Copilot order for {event_cause} at {corridor}...")
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Generate the operational order based on the provided intelligence."}
+    ]
+
+    # 3. Call Hugging Face API
+    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using Hugging Face...")
     try:
-        response = await client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=1000,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": "Generate the operational order based on the provided intelligence."}
-            ]
+        response = await client.chat_completion(
+            messages=messages,
+            max_tokens=800,
         )
-        return response.content[0].text
+        return response.choices[0].message.content
     except Exception as e:
-        logger.error(f"Anthropic API error: {e}")
+        logger.error(f"Hugging Face API error: {e}")
         return f"Error generating operational order: {str(e)}"

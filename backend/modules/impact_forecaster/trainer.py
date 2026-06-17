@@ -156,6 +156,7 @@ async def train_and_save() -> dict:
         min_child_samples=10,
         subsample=0.8,
         colsample_bytree=0.8,
+        is_unbalance=True,
         random_state=42,
         verbose=-1,
     )

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize async client using a strong, free instruction-tuned model
 client = AsyncInferenceClient(
-    model="mistralai/Mistral-7B-Instruct-v0.3",
+    model="HuggingFaceH4/zephyr-7b-beta",
     token=HUGGINGFACE_API_KEY
 )
 

@@ -8,7 +8,7 @@ load_dotenv(env_path)
 
 DATABASE_URL         = os.getenv("DATABASE_URL", "postgresql+asyncpg://btp_user:btp_pass@localhost:5432/btp_intelligence")
 REDIS_URL            = os.getenv("REDIS_URL", "redis://localhost:6379")
-HUGGINGFACE_API_KEY  = os.getenv("HUGGINGFACE_API_KEY", "")
+GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY  = os.getenv("GOOGLE_MAPS_API_KEY", "")
 SECRET_KEY           = os.getenv("SECRET_KEY", "btp_dev_secret_2026")
 BENGALURU_GRAPH_CACHE = os.getenv(

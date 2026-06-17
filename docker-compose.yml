@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: btp_postgres
+    environment:
+      POSTGRES_USER: btp_user
+      POSTGRES_PASSWORD: btp_pass
+      POSTGRES_DB: btp_intelligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    container_name: btp_redis
+    ports:
+      - "6379:6379"
+volumes:
+  postgres_data:

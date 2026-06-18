@@ -9,6 +9,9 @@ from modules.ai_copilot.service import get_gemini_model
 from modules.impact_forecaster.service import predict
 from modules.learning_engine.service import register_active_event
 
+# NEW: Import the WebSocket Notifier
+from modules.websockets.manager import notifier
+
 logger = logging.getLogger(__name__)
 
 async def process_osint_intel(raw_text: str, source: str) -> dict:
@@ -41,11 +44,9 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     """
     
     try:
-        # Call Gemini
         response = await model.generate_content_async(prompt)
         raw_output = response.text.strip()
         
-        # Clean up in case Gemini accidentally adds markdown code blocks
         if raw_output.startswith("```json"):
             raw_output = raw_output[7:-3]
         elif raw_output.startswith("```"):
@@ -81,6 +82,19 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         predicted_risk=predicted_risk,
         expected_end_time=end_time
     )
+
+    # 5. NEW: Real-Time WebSocket Broadcast to React Dashboard
+    alert_payload = {
+        "type": "CRITICAL_ALERT",
+        "timestamp": datetime.now().isoformat(),
+        "source": f"OSINT_Harvester ({source})",
+        "corridor": extracted_data["corridor"],
+        "risk_level": forecast["risk_level"],
+        "predicted_closure_probability": forecast["closure_probability"],
+        "message": f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required.",
+        "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
+    }
+    await notifier.broadcast_alert(alert_payload)
 
     return {
         "status": "OSINT Processing Complete",

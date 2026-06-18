@@ -30,7 +30,8 @@ class ConnectionManager:
         Pushes a JSON payload to every connected dashboard instantly.
         """
         message = json.dumps(payload)
-        for connection in self.active_connections:
+        # FIX: Iterate over a copy of the list using .copy()
+        for connection in self.active_connections.copy():
             try:
                 await connection.send_text(message)
             except Exception as e:

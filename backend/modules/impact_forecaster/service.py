@@ -167,7 +167,9 @@ async def predict(
     closure_proba = float(_closure_model.predict_proba(X)[0, 1])
 
     priority_pred = "High" if priority_proba >= 0.5 else "Low"
-    closure_pred = closure_proba >= 0.5
+    
+    # FIX: Lowered inference threshold to 0.15 for severe rare events
+    closure_pred = closure_proba >= 0.15
 
     # Blends the model's own confidence with the corridor's empirical track
     # record — this is what lets a corridor with a bad history (e.g. Mysore

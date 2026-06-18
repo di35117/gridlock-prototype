@@ -1,0 +1,24 @@
+{
+    "training_samples": 6445,
+    "priority": {
+        "accuracy": 0.9981,
+        "auc": 0.9998,
+        "recall": 0.998
+    },
+    "closure": {
+        "accuracy": 0.9318,
+        "auc": 0.7459,
+        "recall": 0.0
+    },
+    "feature_cols": [
+        "event_cause_enc",
+        "corridor_enc",
+        "hour_of_day",
+        "day_of_week",
+        "corridor_closure_rate",
+        "corridor_high_priority_rate",
+        "corridor_risk_score",
+        "cause_closure_rate",
+        "cause_severity_tier"
+    ]
+}

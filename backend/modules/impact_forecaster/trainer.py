@@ -158,7 +158,7 @@ async def train_and_save() -> dict:
         min_child_samples=10,
         subsample=0.8,
         colsample_bytree=0.8,
-        is_unbalance=True,  # FIX: Mathematically penalizes majority-class guessing
+        is_unbalance=True,
         random_state=42,
         verbose=-1,
     )
@@ -181,21 +181,28 @@ async def train_and_save() -> dict:
                    lgb.log_evaluation(period=-1)],
     )
 
-    # Metrics
-    def _metrics(model, X_v, y_v, name):
-        y_pred = model.predict(X_v)
+    # FIX: Updated Metrics function with manual probability thresholding
+    def _metrics(model, X_v, y_v, name, threshold=0.5):
+        # Extract raw probabilities
+        y_proba = model.predict_proba(X_v)[:, 1]
+        
+        # Apply custom threshold tripwire
+        y_pred = (y_proba >= threshold).astype(int)
+        
         acc = accuracy_score(y_v, y_pred)
-        recall = recall_score(y_v, y_pred, zero_division=0) # Added Recall explicitly
+        recall = recall_score(y_v, y_pred, zero_division=0)
         try:
-            auc = roc_auc_score(y_v, model.predict_proba(X_v)[:, 1])
+            auc = roc_auc_score(y_v, y_proba)
         except Exception:
             auc = None
+            
         auc_str = f"{auc:.4f}" if auc is not None else "N/A"
-        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f}")
+        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f} (threshold={threshold})")
         return {"accuracy": round(acc, 4), "auc": round(auc, 4) if auc else None, "recall": round(recall, 4)}
 
-    priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority")
-    closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure")
+    # Priority uses standard 0.5. Closure uses 0.15 because actual closures are rare.
+    priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority", threshold=0.5)
+    closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure", threshold=0.15)
 
     metrics_payload = {
         "training_samples": int(len(X_tr)),
@@ -209,7 +216,7 @@ async def train_and_save() -> dict:
     joblib.dump(closure_model,  CLOSURE_MODEL_PATH)
     joblib.dump(encoders,       ENCODERS_PATH)
     
-    # NEW: Persist MLOps Metrics
+    # Persist MLOps Metrics
     with open(METRICS_PATH, "w") as f:
         json.dump(metrics_payload, f, indent=4)
         

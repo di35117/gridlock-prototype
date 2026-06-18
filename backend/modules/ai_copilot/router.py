@@ -13,6 +13,7 @@ async def generate(request: CopilotRequest):
         event_cause=request.event_cause,
         corridor=request.corridor,
         expected_crowd=request.expected_crowd,
-        event_details=request.event_details
+        event_details=request.event_details,
+        event_datetime=request.event_datetime
     )
     return CopilotResponse(operational_order=order_text)

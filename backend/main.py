@@ -29,6 +29,7 @@ from modules.surge_detector.service import run_autonomous_surge_scan
 from modules.resource_recommender.router import router as resource_recommender_router
 from modules.learning_engine.router import router as learning_engine_router
 from modules.routing_engine.router import router as routing_engine_router
+from modules.learning_engine.service import autonomous_event_learning_scan
 
 # Initialize the background task scheduler
 scheduler = AsyncIOScheduler()
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
         
     # 4. Start Autonomous Monitoring Daemon
     scheduler.add_job(run_autonomous_surge_scan, 'interval', minutes=5)
+    scheduler.add_job(autonomous_event_learning_scan, 'interval', minutes=5)
     scheduler.start()
     logger.info("Autonomous Monitoring Daemon (APScheduler) started.")
         

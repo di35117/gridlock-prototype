@@ -30,6 +30,7 @@ from modules.resource_recommender.router import router as resource_recommender_r
 from modules.learning_engine.router import router as learning_engine_router
 from modules.routing_engine.router import router as routing_engine_router
 from modules.learning_engine.service import autonomous_event_learning_scan
+from modules.osint_harvester.router import router as osint_harvester_router
 
 # Initialize the background task scheduler
 scheduler = AsyncIOScheduler()
@@ -85,6 +86,7 @@ app.include_router(resource_recommender_router)
 app.include_router(routing_engine_router)
 app.include_router(ai_copilot_router)
 app.include_router(learning_engine_router)
+app.include_router(osint_harvester_router)
 
 @app.get("/health")
 async def health():

@@ -9,12 +9,13 @@ corridor_risk_profiles + event_cause_stats tables (enrichment join).
 
 import logging
 import joblib
+import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, roc_auc_score, recall_score
 import lightgbm as lgb
 from sqlalchemy import text
 
@@ -30,6 +31,7 @@ MODELS_DIR = (
 PRIORITY_MODEL_PATH = MODELS_DIR / "priority_classifier.joblib"
 CLOSURE_MODEL_PATH  = MODELS_DIR / "closure_classifier.joblib"
 ENCODERS_PATH       = MODELS_DIR / "encoders.joblib"
+METRICS_PATH        = MODELS_DIR / "model_metrics.json" # MLOps Metrics Path
 
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -156,7 +158,7 @@ async def train_and_save() -> dict:
         min_child_samples=10,
         subsample=0.8,
         colsample_bytree=0.8,
-        #is_unbalance=True,
+        is_unbalance=True,  # FIX: Mathematically penalizes majority-class guessing
         random_state=42,
         verbose=-1,
     )
@@ -181,30 +183,39 @@ async def train_and_save() -> dict:
 
     # Metrics
     def _metrics(model, X_v, y_v, name):
-        acc = accuracy_score(y_v, model.predict(X_v))
+        y_pred = model.predict(X_v)
+        acc = accuracy_score(y_v, y_pred)
+        recall = recall_score(y_v, y_pred, zero_division=0) # Added Recall explicitly
         try:
             auc = roc_auc_score(y_v, model.predict_proba(X_v)[:, 1])
         except Exception:
             auc = None
         auc_str = f"{auc:.4f}" if auc is not None else "N/A"
-        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}")
-        return {"accuracy": round(acc, 4), "auc": round(auc, 4) if auc else None}
+        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f}")
+        return {"accuracy": round(acc, 4), "auc": round(auc, 4) if auc else None, "recall": round(recall, 4)}
 
     priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority")
     closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure")
 
-    # Persist
-    joblib.dump(priority_model, PRIORITY_MODEL_PATH)
-    joblib.dump(closure_model,  CLOSURE_MODEL_PATH)
-    joblib.dump(encoders,       ENCODERS_PATH)
-    logger.info(f"Models saved to {MODELS_DIR}")
-
-    return {
+    metrics_payload = {
         "training_samples": int(len(X_tr)),
         "priority":         priority_metrics,
         "closure":          closure_metrics,
         "feature_cols":     FEATURE_COLS,
     }
+
+    # Persist
+    joblib.dump(priority_model, PRIORITY_MODEL_PATH)
+    joblib.dump(closure_model,  CLOSURE_MODEL_PATH)
+    joblib.dump(encoders,       ENCODERS_PATH)
+    
+    # NEW: Persist MLOps Metrics
+    with open(METRICS_PATH, "w") as f:
+        json.dump(metrics_payload, f, indent=4)
+        
+    logger.info(f"Models and metrics saved to {MODELS_DIR}")
+
+    return metrics_payload
 
 
 # ── Loading ────────────────────────────────────────────────────────────

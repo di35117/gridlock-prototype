@@ -1,17 +1,21 @@
 """
 Learning Engine Service.
 Processes post-event feedback to autonomously update calibration factors
-using an Exponential Moving Average (EMA). Includes Google Maps polling logic.
+using an Exponential Moving Average (EMA). Now features Redis persistence 
+and a background daemon for true per-event learning lifecycle tracking.
 """
 import logging
+import random
+import json
 from datetime import datetime
 import googlemaps
+import redis.asyncio as redis
 
-from config import GOOGLE_MAPS_API_KEY
+from config import GOOGLE_MAPS_API_KEY, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
-# Initialize Google Maps Client safely so the app doesn't crash if the key is missing
+# Initialize Google Maps
 gmaps = None
 if GOOGLE_MAPS_API_KEY:
     try:
@@ -19,22 +23,33 @@ if GOOGLE_MAPS_API_KEY:
     except Exception as e:
         logger.warning(f"Failed to initialize Google Maps client: {e}")
 
-# In-memory calibration store for the demo.
-# In production, this lives in PostgreSQL. Format: {(corridor, event_cause): calibration_factor}
-_calibration_store = {}
+# Initialize async Redis client for persistent learning memory
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
-async def poll_live_congestion(corridor_origin: str, corridor_dest: str, is_demo_mode: bool = True) -> float:
-    """
-    Polls Google Maps to calculate the real-time congestion ratio.
-    Ratio > 1.0 means traffic is slower than normal.
-    """
+
+async def register_active_event(event_id: str, corridor: str, event_cause: str, predicted_risk: float, expected_end_time: datetime) -> dict:
+    """Registers an event in Redis to be monitored by the autonomous daemon."""
+    event_data = {
+        "corridor": corridor,
+        "event_cause": event_cause,
+        "predicted_risk": predicted_risk,
+        "expected_end_time": expected_end_time.isoformat()
+    }
+    
+    # Store in Redis with the 'active_event' prefix
+    await redis_client.set(f"active_event:{event_id}", json.dumps(event_data))
+    logger.info(f"Event {event_id} registered for autonomous learning loop. Closes at {expected_end_time}.")
+    
+    return {"status": "success", "message": f"Event {event_id} queued for autonomous post-event analysis."}
+
+
+async def poll_live_congestion(corridor_origin: str, corridor_dest: str, is_demo_mode: bool) -> float:
+    """Polls Google Maps API to calculate the real-time congestion ratio."""
     if is_demo_mode or not gmaps:
-        # HACKATHON DEMO MODE: Simulate a real-world congestion spike
-        logger.info(f"[SIMULATION] Polling Google Maps for {corridor_origin}...")
-        return 1.85  # Simulating that traffic is taking 85% longer than usual
-
+        logger.info(f"[SIMULATION] Polling live map data for {corridor_origin}...")
+        return random.uniform(1.3, 2.0)  # Simulate typical congestion spike
+        
     try:
-        # PRODUCTION MODE: Real Google Maps API Call
         now = datetime.now()
         result = gmaps.distance_matrix(
             origins=[corridor_origin],
@@ -43,67 +58,51 @@ async def poll_live_congestion(corridor_origin: str, corridor_dest: str, is_demo
             departure_time=now
         )
         
-        # Extract normal time vs time in current traffic
         leg = result['rows'][0]['elements'][0]
-        
-        # 'duration_in_traffic' is only returned if departure_time is provided
         if 'duration_in_traffic' not in leg:
-            logger.warning("duration_in_traffic not returned by API. Falling back to baseline.")
+            logger.warning("duration_in_traffic missing from map API. Defaulting to 1.0")
             return 1.0
             
-        normal_duration = leg['duration']['value']           # e.g., 600 seconds
-        traffic_duration = leg['duration_in_traffic']['value'] # e.g., 1200 seconds
+        normal_duration = leg['duration']['value']
+        traffic_duration = leg['duration_in_traffic']['value']
         
-        if normal_duration == 0:
-            return 1.0
-            
-        congestion_ratio = traffic_duration / normal_duration
-        return congestion_ratio
+        return traffic_duration / normal_duration if normal_duration > 0 else 1.0
         
     except Exception as e:
         logger.error(f"Google Maps API Error: {e}")
-        return 1.0 # Default to baseline if API fails
+        return 1.0
 
-async def process_learning_feedback(
-    corridor: str, 
-    event_cause: str, 
-    predicted_risk: float, 
-    observed_ratio: float = None
-) -> dict:
-    
+
+async def process_learning_feedback(corridor: str, event_cause: str, predicted_risk: float, observed_ratio: float = None, is_demo_mode: bool = False) -> dict:
+    """The EMA Math engine. Calculates new multiplier and permanently saves to Redis."""
     logger.info(f"Processing post-event learning for {event_cause} at {corridor}...")
 
-    # If no real-world ratio is provided via the API payload, dynamically poll Google Maps
     if not observed_ratio:
-        logger.info("No manual ratio provided. Triggering live Google Maps polling pipeline...")
-        
-        # We pass the corridor as the origin, and a mock destination for the distance matrix
         observed_ratio = await poll_live_congestion(
             corridor_origin=f"{corridor}, Bengaluru", 
             corridor_dest=f"{corridor} Junction, Bengaluru",
-            is_demo_mode=True  # Set to False to hit the real Google Maps API
+            is_demo_mode=is_demo_mode
         )
     
-    # 1. Fetch current calibration (Default is 1.0)
-    key = (corridor, event_cause)
-    current_cal = _calibration_store.get(key, 1.0)
+    # Fetch permanent memory from Redis
+    cal_key = f"calib:{corridor.lower()}:{event_cause.lower()}"
+    current_cal_str = await redis_client.get(cal_key)
+    current_cal = float(current_cal_str) if current_cal_str else 1.0
     
-    # 2. Calculate the correction needed
-    # Example: If we predicted 1.0 but observed 1.85, the target correction is 1.85x
-    correction = observed_ratio / max(predicted_risk, 0.1)  # Prevent division by zero
+    # Prevent division by zero mathematically
+    safe_prediction = max(predicted_risk, 0.1)
+    correction = observed_ratio / safe_prediction
     
-    # 3. Apply Exponential Moving Average (EMA) Update
-    # Blend 70% historical knowledge with 30% new reality to prevent massive over-correction
+    # EMA Equation: 70% history, 30% new reality
     new_cal = (0.7 * current_cal) + (0.3 * correction)
     
-    # Save back to state
-    _calibration_store[key] = new_cal
+    # Save permanent state back to Redis
+    await redis_client.set(cal_key, str(new_cal))
     
-    # 4. Generate the actionable insight for the dashboard
     if new_cal > 1.05:
-        insight = f"Model under-predicted. {corridor} is more vulnerable to {event_cause} than baseline. Multiplier updated to {new_cal:.2f}x for future forecasts."
+        insight = f"Model under-predicted. {corridor} is highly vulnerable to {event_cause}. Multiplier updated to {new_cal:.2f}x."
     elif new_cal < 0.95:
-        insight = f"Model over-predicted. BTP handled {event_cause} exceptionally well on {corridor}. Multiplier reduced to {new_cal:.2f}x."
+        insight = f"Model over-predicted. Multiplier reduced to {new_cal:.2f}x."
     else:
         insight = "Model accurately calibrated. No significant adjustment needed."
 
@@ -116,3 +115,38 @@ async def process_learning_feedback(
         "new_calibration_factor": round(new_cal, 2),
         "learning_insight": insight
     }
+
+
+async def autonomous_event_learning_scan():
+    """
+    Background daemon function. 
+    Finds events that have ended, runs the learning loop, and purges the active record.
+    """
+    logger.info("[LEARNING DAEMON] Scanning for completed events...")
+    
+    # Find all active events registered in Redis
+    keys = await redis_client.keys("active_event:*")
+    now = datetime.now()
+    
+    for key in keys:
+        event_data_str = await redis_client.get(key)
+        if not event_data_str:
+            continue
+            
+        event_data = json.loads(event_data_str)
+        end_time = datetime.fromisoformat(event_data["expected_end_time"])
+        
+        if now >= end_time:
+            # Event has finished. Trigger the autonomous map polling and learning loop!
+            logger.info(f"[AUTONOMOUS LEARNING] Event {key} concluded. Initiating map poll & EMA update...")
+            
+            await process_learning_feedback(
+                corridor=event_data["corridor"],
+                event_cause=event_data["event_cause"],
+                predicted_risk=event_data["predicted_risk"],
+                observed_ratio=None, 
+                is_demo_mode=True # Defaulting to demo mode for safe hackathon presentation
+            )
+            
+            # Clean up the completed event
+            await redis_client.delete(key)

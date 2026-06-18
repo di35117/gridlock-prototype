@@ -22,9 +22,10 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
     """)
     
     # 3. Fetch the historical closure rate for this specific event cause
-    query_cause = text("""
-        SELECT closure_rate FROM event_cause_stats 
-        WHERE cause = :event_cause LIMIT 1
+    query = text("""
+        SELECT closure_rate, severity_tier
+        FROM event_cause_stats
+        WHERE event_cause = :event_cause LIMIT 1 
     """)
 
     async with engine.connect() as conn:

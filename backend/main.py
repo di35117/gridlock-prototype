@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 load_dotenv()
 
@@ -24,9 +25,13 @@ from modules.impact_forecaster.router import router as impact_forecaster_router
 from modules.compound_conflict.router import router as compound_conflict_router
 from modules.ai_copilot.router import router as ai_copilot_router
 from modules.surge_detector.router import router as surge_detector_router
+from modules.surge_detector.service import run_autonomous_surge_scan
 from modules.resource_recommender.router import router as resource_recommender_router
 from modules.learning_engine.router import router as learning_engine_router
 from modules.routing_engine.router import router as routing_engine_router
+
+# Initialize the background task scheduler
+scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,7 +45,7 @@ async def lifespan(app: FastAPI):
     df_result = await data_foundation_service.initialize_data_foundation()
     logger.info(f"Data foundation: {df_result}")
     
-    # 3. Init Impact Forecaster (Fixes Audit Issue #7)
+    # 3. Init Impact Forecaster
     if not forecaster_trainer.models_exist():
         logger.info("No trained forecaster models found — training now …")
         metrics = await forecaster_trainer.train_and_save()
@@ -48,15 +53,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
         
+    # 4. Start Autonomous Monitoring Daemon
+    scheduler.add_job(run_autonomous_surge_scan, 'interval', minutes=5)
+    scheduler.start()
+    logger.info("Autonomous Monitoring Daemon (APScheduler) started.")
+        
     logger.info("━━━ Startup complete — ready to serve ━━━")
     yield
+    
     logger.info("━━━ Shutting down ━━━")
+    scheduler.shutdown()
 
 app = FastAPI(title="BTP Event Intelligence Platform", lifespan=lifespan)
 
+# CORS opened for seamless frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

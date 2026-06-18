@@ -28,26 +28,24 @@ from modules.surge_detector.router import router as surge_detector_router
 from modules.surge_detector.service import run_autonomous_surge_scan
 from modules.resource_recommender.router import router as resource_recommender_router
 from modules.learning_engine.router import router as learning_engine_router
-from modules.routing_engine.router import router as routing_engine_router
 from modules.learning_engine.service import autonomous_event_learning_scan
+from modules.routing_engine.router import router as routing_engine_router
 from modules.osint_harvester.router import router as osint_harvester_router
 
-# Initialize the background task scheduler
+# NEW: Import the WebSocket Router
+from modules.websockets.router import router as websocket_router 
+
 scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("━━━ BTP Event Intelligence — starting up ━━━")
-    
-    # 1. Init DB
     await init_db()
     logger.info("Database tables ready")
     
-    # 2. Boot Data Foundation
-    df_result = await data_foundation_service.initialize_data_foundation()
-    logger.info(f"Data foundation: {df_result}")
+    df_status = await data_foundation_service.initialize_data_foundation()
+    logger.info(f"Data foundation: {df_status}")
     
-    # 3. Init Impact Forecaster
     if not forecaster_trainer.models_exist():
         logger.info("No trained forecaster models found — training now …")
         metrics = await forecaster_trainer.train_and_save()
@@ -55,7 +53,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
         
-    # 4. Start Autonomous Monitoring Daemon
+    # Start Autonomous Monitoring Daemon
     scheduler.add_job(run_autonomous_surge_scan, 'interval', minutes=5)
     scheduler.add_job(autonomous_event_learning_scan, 'interval', minutes=5)
     scheduler.start()
@@ -84,10 +82,9 @@ app.include_router(compound_conflict_router)
 app.include_router(surge_detector_router)
 app.include_router(resource_recommender_router)
 app.include_router(routing_engine_router)
-app.include_router(ai_copilot_router)
 app.include_router(learning_engine_router)
+app.include_router(ai_copilot_router)
 app.include_router(osint_harvester_router)
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "BTP Event Intelligence"}
+# NEW: Register the WebSocket endpoint
+app.include_router(websocket_router)

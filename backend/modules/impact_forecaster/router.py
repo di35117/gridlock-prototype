@@ -3,6 +3,7 @@ API routes for the Impact Forecaster module (Pain Point 1).
 """
 
 import logging
+import json
 from fastapi import APIRouter, HTTPException
 
 from modules.impact_forecaster import trainer, service
@@ -16,6 +17,21 @@ router = APIRouter(prefix="/api/forecast", tags=["Impact Forecaster"])
 @router.get("/status")
 async def status():
     return {"models_trained": trainer.models_exist()}
+
+
+@router.get("/metrics")
+async def get_metrics():
+    """
+    MLOps Endpoint: Returns the performance metrics of the deployed LightGBM models.
+    """
+    if not trainer.METRICS_PATH.exists():
+        raise HTTPException(
+            status_code=404, 
+            detail="Metrics file not found. Call POST /api/forecast/train first."
+        )
+        
+    with open(trainer.METRICS_PATH, "r") as f:
+        return json.load(f)
 
 
 @router.post("/train", response_model=TrainResponse)

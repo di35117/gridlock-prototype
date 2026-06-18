@@ -5,6 +5,7 @@ produces on-demand event impact forecasts. This is what closes Pain Point 1
 """
 
 import logging
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -27,24 +28,39 @@ _encoders = None
 # Reset to None if corridor_risk_profiles is ever reloaded while the server
 # is running.
 _risk_score_bounds: tuple[float, float] | None = None
+_dynamic_closure_threshold = 0.5 # Default fallback
 
 
 def _ensure_models_loaded() -> None:
-    global _priority_model, _closure_model, _encoders
+    global _priority_model, _closure_model, _encoders, _dynamic_closure_threshold
     if _priority_model is None or _closure_model is None or _encoders is None:
         if not trainer.models_exist():
             raise RuntimeError(
                 "Impact Forecaster models not found. Call POST /api/forecast/train first."
             )
         _priority_model, _closure_model, _encoders = trainer.load_models()
-        logger.info("Impact Forecaster models loaded into memory.")
+        
+        # Read the dynamically calculated threshold from the JSON file
+        if trainer.METRICS_PATH.exists():
+            with open(trainer.METRICS_PATH, 'r') as f:
+                metrics = json.load(f)
+                _dynamic_closure_threshold = metrics.get('closure', {}).get('applied_threshold', 0.5)
+                
+        logger.info(f"Impact Forecaster models loaded. Active Closure Tripwire: {_dynamic_closure_threshold:.4f}")
 
 
 def reload_models() -> None:
     """Force a fresh load from disk — call this right after retraining."""
-    global _priority_model, _closure_model, _encoders
+    global _priority_model, _closure_model, _encoders, _dynamic_closure_threshold
     _priority_model, _closure_model, _encoders = trainer.load_models()
-    logger.info("Impact Forecaster models reloaded.")
+    
+    # Reload the threshold too
+    if trainer.METRICS_PATH.exists():
+        with open(trainer.METRICS_PATH, 'r') as f:
+            metrics = json.load(f)
+            _dynamic_closure_threshold = metrics.get('closure', {}).get('applied_threshold', 0.5)
+            
+    logger.info(f"Impact Forecaster models reloaded. Active Closure Tripwire: {_dynamic_closure_threshold:.4f}")
 
 
 # ── Context lookups against the pre-computed tables ───────────────────
@@ -168,8 +184,8 @@ async def predict(
 
     priority_pred = "High" if priority_proba >= 0.5 else "Low"
     
-    # FIX: Lowered inference threshold to 0.15 for severe rare events
-    closure_pred = closure_proba >= 0.15
+    # FIX: Use the mathematically optimal threshold loaded from JSON
+    closure_pred = closure_proba >= _dynamic_closure_threshold
 
     # Blends the model's own confidence with the corridor's empirical track
     # record — this is what lets a corridor with a bad history (e.g. Mysore

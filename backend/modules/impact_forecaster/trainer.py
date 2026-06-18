@@ -1,7 +1,8 @@
 """
 Trains two LightGBM classifiers on all 8,173 ASTRAM incidents.
-Implements Cyclic Time Encoding and Bayesian Hyperparameter Tuning (Optuna)
-to maximize AUC and F2-Score for highly imbalanced road closures.
+Implements Cyclic Time Encoding, Bayesian Hyperparameter Tuning (Optuna),
+and High-Resolution Geographic/Contextual Features (police_station, veh_type, zone, lat/lon)
+to maximize AUC and F2-Score.
 """
 
 import logging
@@ -36,6 +37,11 @@ async def fetch_training_data() -> pd.DataFrame:
         SELECT
             i.event_cause,
             i.corridor,
+            i.police_station,
+            i.veh_type,
+            i.zone,
+            i.latitude,
+            i.longitude,
             i.hour_of_day,
             i.day_of_week,
             i.priority,
@@ -60,10 +66,14 @@ async def fetch_training_data() -> pd.DataFrame:
 
 # ── Feature engineering ────────────────────────────────────────────────
 
-# NEW: Added Cyclic Time Features
 FEATURE_COLS = [
     "event_cause_enc",
     "corridor_enc",
+    "police_station_enc",
+    "veh_type_enc",
+    "zone_enc",
+    "latitude",
+    "longitude",
     "hour_of_day",
     "day_of_week",
     "hour_sin",
@@ -83,10 +93,17 @@ def build_features(
     fit: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     df = df.copy()
-    df["corridor"]    = df["corridor"].fillna("Non-corridor")
-    df["event_cause"] = df["event_cause"].fillna("unknown")
+    
+    # Handle Missing Values for the new columns
+    df["corridor"]       = df["corridor"].fillna("Non-corridor")
+    df["event_cause"]    = df["event_cause"].fillna("unknown")
+    df["police_station"] = df["police_station"].fillna("unknown")
+    df["veh_type"]       = df["veh_type"].fillna("unknown")
+    df["zone"]           = df["zone"].fillna("unknown")
+    df['latitude']       = pd.to_numeric(df['latitude'], errors='coerce').fillna(0.0)
+    df['longitude']      = pd.to_numeric(df['longitude'], errors='coerce').fillna(0.0)
 
-    # NEW: Trigonometric Cyclic Encoding for Time
+    # Trigonometric Cyclic Encoding for Time
     df['hour_sin'] = np.sin(2 * np.pi * df['hour_of_day'] / 24.0)
     df['hour_cos'] = np.cos(2 * np.pi * df['hour_of_day'] / 24.0)
     df['day_sin']  = np.sin(2 * np.pi * df['day_of_week'] / 7.0)
@@ -94,11 +111,17 @@ def build_features(
 
     if fit:
         encoders = {
-            "event_cause": LabelEncoder(),
-            "corridor":    LabelEncoder(),
+            "event_cause":    LabelEncoder(),
+            "corridor":       LabelEncoder(),
+            "police_station": LabelEncoder(),
+            "veh_type":       LabelEncoder(),
+            "zone":           LabelEncoder(),
         }
-        df["event_cause_enc"] = encoders["event_cause"].fit_transform(df["event_cause"])
-        df["corridor_enc"]    = encoders["corridor"].fit_transform(df["corridor"])
+        df["event_cause_enc"]    = encoders["event_cause"].fit_transform(df["event_cause"])
+        df["corridor_enc"]       = encoders["corridor"].fit_transform(df["corridor"])
+        df["police_station_enc"] = encoders["police_station"].fit_transform(df["police_station"])
+        df["veh_type_enc"]       = encoders["veh_type"].fit_transform(df["veh_type"])
+        df["zone_enc"]           = encoders["zone"].fit_transform(df["zone"])
     else:
         def safe_transform(enc: LabelEncoder, values: pd.Series) -> np.ndarray:
             known = set(enc.classes_)
@@ -106,8 +129,11 @@ def build_features(
                 int(enc.transform([v])[0]) if v in known else -1
                 for v in values
             ])
-        df["event_cause_enc"] = safe_transform(encoders["event_cause"], df["event_cause"])
-        df["corridor_enc"]    = safe_transform(encoders["corridor"],    df["corridor"])
+        df["event_cause_enc"]    = safe_transform(encoders["event_cause"], df["event_cause"])
+        df["corridor_enc"]       = safe_transform(encoders["corridor"], df["corridor"])
+        df["police_station_enc"] = safe_transform(encoders["police_station"], df["police_station"])
+        df["veh_type_enc"]       = safe_transform(encoders["veh_type"], df["veh_type"])
+        df["zone_enc"]           = safe_transform(encoders["zone"], df["zone"])
 
     X = df[FEATURE_COLS].fillna(0).astype(float)
     return X, encoders
@@ -123,7 +149,6 @@ async def train_and_save() -> dict:
     y_closure  = df["requires_road_closure"].astype(int)
     X, encoders = build_features(df, fit=True)
 
-    # Stratify strictly on closure to ensure rare events exist in validation
     X_tr, X_val, yp_tr, yp_val, yc_tr, yc_val = train_test_split(
         X, y_priority, y_closure,
         test_size=0.2,
@@ -131,12 +156,10 @@ async def train_and_save() -> dict:
         stratify=y_closure, 
     )
 
-    # Priority Model (Already highly optimized)
     logger.info("Training priority classifier …")
     priority_model = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.05, is_unbalance=True, random_state=42, verbose=-1)
     priority_model.fit(X_tr, yp_tr, eval_set=[(X_val, yp_val)], callbacks=[lgb.early_stopping(30, verbose=False)])
 
-    # Closure Model (Advanced Bayesian Optimization)
     logger.info("Initiating Bayesian Optuna Study for Closure Model…")
     try:
         import optuna
@@ -147,7 +170,7 @@ async def train_and_save() -> dict:
                 'n_estimators': trial.suggest_int('n_estimators', 100, 300),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
                 'num_leaves': trial.suggest_int('num_leaves', 15, 63),
-                'scale_pos_weight': trial.suggest_float('scale_pos_weight', 5.0, 25.0), # Replaces standard is_unbalance
+                'scale_pos_weight': trial.suggest_float('scale_pos_weight', 5.0, 25.0),
                 'objective': 'binary',
                 'random_state': 42,
                 'verbose': -1
@@ -156,26 +179,24 @@ async def train_and_save() -> dict:
             model.fit(X_tr, yc_tr)
             y_proba = model.predict_proba(X_val)[:, 1]
             
-            # Target maximization of F2-Score inside Optuna
             precisions, recalls, _ = precision_recall_curve(yc_val, y_proba)
             denom = (4 * precisions[:-1] + recalls[:-1])
             f2_scores = np.divide((5 * precisions[:-1] * recalls[:-1]), denom, out=np.zeros_like(denom), where=denom!=0)
             return np.max(f2_scores) if len(f2_scores) > 0 else 0
 
         study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=15) # Runs 15 simulated models
+        study.optimize(objective, n_trials=15)
         best_params = study.best_params
         best_params.update({'objective': 'binary', 'random_state': 42, 'verbose': -1})
         logger.info(f"Optuna complete. Best params: {best_params}")
 
     except ImportError:
-        logger.warning("Optuna not found. Falling back to default parameters. (pip install optuna)")
+        logger.warning("Optuna not found. Falling back to default parameters.")
         best_params = {'n_estimators': 300, 'learning_rate': 0.05, 'is_unbalance': True, 'verbose': -1, 'random_state': 42}
 
     closure_model = lgb.LGBMClassifier(**best_params)
     closure_model.fit(X_tr, yc_tr, eval_set=[(X_val, yc_val)], callbacks=[lgb.early_stopping(30, verbose=False)])
 
-    # Dynamic Metrics Logic
     def _metrics(model, X_v, y_v, name, optimize_threshold=False):
         y_proba = model.predict_proba(X_v)[:, 1]
         threshold = 0.5

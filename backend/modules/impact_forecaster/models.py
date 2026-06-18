@@ -15,6 +15,13 @@ class ForecastRequest(BaseModel):
     )
     hour_of_day: Optional[int] = Field(None, ge=0, le=23)
     day_of_week: Optional[int] = Field(None, ge=0, le=6, description="0=Monday ... 6=Sunday")
+    
+    # NEW: Added Micro-Geography and Vehicle Context
+    police_station: Optional[str] = Field("unknown", description="Name of the responding police station")
+    veh_type: Optional[str] = Field("unknown", description="Type of vehicle involved, if applicable")
+    zone: Optional[str] = Field("unknown", description="Broad zone name, e.g. 'Central Zone 2'")
+    latitude: Optional[float] = Field(0.0, description="Exact latitude of the event")
+    longitude: Optional[float] = Field(0.0, description="Exact longitude of the event")
 
     @field_validator("event_cause", "corridor")
     @classmethod

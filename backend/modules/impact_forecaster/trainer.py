@@ -15,7 +15,7 @@ import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score, recall_score
+from sklearn.metrics import accuracy_score, roc_auc_score, recall_score, precision_recall_curve
 import lightgbm as lgb
 from sqlalchemy import text
 
@@ -181,28 +181,41 @@ async def train_and_save() -> dict:
                    lgb.log_evaluation(period=-1)],
     )
 
-    # FIX: Updated Metrics function with manual probability thresholding
-    def _metrics(model, X_v, y_v, name, threshold=0.5):
-        # Extract raw probabilities
+    # FIX: Dynamic Threshold Optimization
+    def _metrics(model, X_v, y_v, name, optimize_threshold=False):
         y_proba = model.predict_proba(X_v)[:, 1]
         
-        # Apply custom threshold tripwire
+        threshold = 0.5
+        # Dynamically find the perfect threshold for highly imbalanced data
+        if optimize_threshold and sum(y_v) > 0:
+            precisions, recalls, thresholds = precision_recall_curve(y_v, y_proba)
+            # F2-Score formula (Heavily weights Recall over Precision)
+            f2_scores = (5 * precisions[:-1] * recalls[:-1]) / (4 * precisions[:-1] + recalls[:-1] + 1e-10)
+            best_idx = np.argmax(f2_scores)
+            threshold = thresholds[best_idx]
+            
         y_pred = (y_proba >= threshold).astype(int)
-        
         acc = accuracy_score(y_v, y_pred)
         recall = recall_score(y_v, y_pred, zero_division=0)
+        
         try:
             auc = roc_auc_score(y_v, y_proba)
         except Exception:
             auc = None
             
         auc_str = f"{auc:.4f}" if auc is not None else "N/A"
-        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f} (threshold={threshold})")
-        return {"accuracy": round(acc, 4), "auc": round(auc, 4) if auc else None, "recall": round(recall, 4)}
+        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f} (Dynamic Threshold: {threshold:.4f})")
+        
+        return {
+            "accuracy": round(acc, 4), 
+            "auc": round(auc, 4) if auc else None, 
+            "recall": round(recall, 4),
+            "applied_threshold": round(float(threshold), 4) # Save this to the JSON
+        }
 
-    # Priority uses standard 0.5. Closure uses 0.15 because actual closures are rare.
-    priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority", threshold=0.5)
-    closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure", threshold=0.15)
+    # Priority keeps 0.5. Closure calculates the exact mathematical optimum.
+    priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority", optimize_threshold=False)
+    closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure", optimize_threshold=True)
 
     metrics_payload = {
         "training_samples": int(len(X_tr)),

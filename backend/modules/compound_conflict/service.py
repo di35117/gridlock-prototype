@@ -20,6 +20,12 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
         SELECT COUNT(*) as count FROM incidents
         WHERE corridor ILIKE :corridor AND event_cause = 'construction'
     """)
+    
+    # 3. Fetch the historical closure rate for this specific event cause
+    query_cause = text("""
+        SELECT closure_rate FROM event_cause_stats 
+        WHERE cause = :event_cause LIMIT 1
+    """)
 
     async with engine.connect() as conn:
         prof_res = await conn.execute(query_profile, {"corridor": corridor})
@@ -29,16 +35,19 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
         cons_res = await conn.execute(query_construction, {"corridor": corridor})
         cons_row = cons_res.fetchone()
         construction_count = int(cons_row.count) if cons_row else 0
+        
+        cause_res = await conn.execute(query_cause, {"event_cause": event_cause})
+        cause_row = cause_res.fetchone()
+        cause_closure_rate = float(cause_row.closure_rate) if cause_row and cause_row.closure_rate else 0.1
 
-    # 3. Calculate the Compound Multiplier
-    # Base is 1.0. Every construction incident adds a 5% multiplier to the base risk.
-    # Capped at a 2.5x multiplier to prevent runaway scaling on ORR East 2 (which has 102 incidents).
-    raw_multiplier = 1.0 + (construction_count * 0.05)
-    multiplier = min(raw_multiplier, 2.5)
+    # 4. Calculate the Compound Multiplier
+    # Base is 1.0. The impact of construction is mathematically weighted by the inherent severity of the event.
+    raw_multiplier = 1.0 + (construction_count * 0.05 * (1.0 + cause_closure_rate))
+    multiplier = min(raw_multiplier, 2.5) # Capped at 2.5x to prevent runaway scaling
 
     compound_score = base_risk * multiplier
 
-    # 4. Classify the Compounded Risk
+    # 5. Classify the Compounded Risk
     if compound_score >= 8.0:
         level = "Critical"
     elif compound_score >= 6.0:
@@ -48,19 +57,24 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
     else:
         level = "Low"
 
-    # 5. Generate Actionable Warnings
+    # 6. Generate Actionable Warnings
     warnings = []
     if construction_count > 0:
         warnings.append(f"Compound Risk: {construction_count} active construction zones detected on {corridor}.")
-        warnings.append(f"Baseline corridor risk multiplied by {multiplier:.2f}x due to infrastructure stress.")
+        warnings.append(f"Baseline corridor risk multiplied by {multiplier:.2f}x due to infrastructure stress and event severity.")
         
         if construction_count > 10:
             warnings.append("SEVERE: Corridor is heavily degraded. Diversion routing is mandatory.")
+            
+    if cause_closure_rate > 0.4:
+        warnings.append(f"High-severity event type ({event_cause}) drastically increases compound breakdown risk.")
 
     return {
         "corridor": corridor,
+        "event_cause": event_cause,
         "base_risk_score": round(base_risk, 2),
         "construction_incident_count": construction_count,
+        "cause_closure_rate": round(cause_closure_rate, 2),
         "compound_multiplier": round(multiplier, 2),
         "compound_risk_score": round(compound_score, 2),
         "risk_level": level,

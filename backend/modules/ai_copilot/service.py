@@ -7,6 +7,8 @@ Includes auto-resolution for regional API key model availability.
 import logging
 import google.generativeai as genai
 from sqlalchemy import text
+from fastapi import HTTPException
+from datetime import datetime
 
 from config import GEMINI_API_KEY
 from database import engine
@@ -18,8 +20,15 @@ logger = logging.getLogger(__name__)
 # Configure Gemini SDK
 genai.configure(api_key=GEMINI_API_KEY)
 
+# Singleton cache to prevent live network calls on every request
+_CACHED_MODEL = None
+
 def get_gemini_model():
-    """Auto-discovers the best available model for your specific API key/region."""
+    """Auto-discovers the best available model and caches it."""
+    global _CACHED_MODEL
+    if _CACHED_MODEL:
+        return _CACHED_MODEL
+        
     try:
         available_models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
@@ -27,24 +36,28 @@ def get_gemini_model():
         for m in available_models:
             if 'gemini-1.5-flash' in m.name:
                 logger.info(f"Auto-selected model: {m.name}")
-                return genai.GenerativeModel(m.name)
+                _CACHED_MODEL = genai.GenerativeModel(m.name)
+                return _CACHED_MODEL
                 
         # 2. Try 1.5 Pro
         for m in available_models:
             if 'gemini-1.5-pro' in m.name:
                 logger.info(f"Auto-selected model: {m.name}")
-                return genai.GenerativeModel(m.name)
+                _CACHED_MODEL = genai.GenerativeModel(m.name)
+                return _CACHED_MODEL
                 
         # 3. Fallback to whatever text model is available
         if available_models:
             logger.info(f"Fallback auto-selected model: {available_models[0].name}")
-            return genai.GenerativeModel(available_models[0].name)
+            _CACHED_MODEL = genai.GenerativeModel(available_models[0].name)
+            return _CACHED_MODEL
             
         raise ValueError("No valid text generation models found for this API key.")
     except Exception as e:
         logger.error(f"Model auto-discovery failed: {e}")
         # Absolute hardcoded fallback
-        return genai.GenerativeModel('models/gemini-1.5-flash')
+        _CACHED_MODEL = genai.GenerativeModel('models/gemini-1.5-flash')
+        return _CACHED_MODEL
 
 async def _get_historical_stations(corridor: str) -> list[str]:
     """Fetch which stations historically handle this corridor."""
@@ -61,14 +74,18 @@ async def generate_operational_order(
     event_cause: str,
     corridor: str,
     expected_crowd: int,
-    event_details: str
+    event_details: str,
+    event_datetime: datetime
 ) -> str:
     
-    # Lazy init to prevent startup crashes before .env is loaded
     model = get_gemini_model()
     
-    # 1. Gather Intelligence
-    forecast = await predict(event_cause=event_cause, corridor=corridor, hour_of_day=18, day_of_week=5)
+    # Extract dynamic time parameters instead of hardcoding
+    hour = event_datetime.hour
+    dow = event_datetime.weekday()
+    
+    # 1. Gather Intelligence based on the actual requested time
+    forecast = await predict(event_cause=event_cause, corridor=corridor, hour_of_day=hour, day_of_week=dow)
     conflict = await detect_conflict(corridor=corridor, event_cause=event_cause)
     stations = await _get_historical_stations(corridor=corridor)
     
@@ -85,6 +102,7 @@ async def generate_operational_order(
     --- INTELLIGENCE BRIEF ---
     Location: {corridor}
     Event Type: {event_cause}
+    Event Time: {event_datetime.strftime("%Y-%m-%d %H:%M")}
     Expected Crowd: {expected_crowd}
     Additional Details: {event_details}
     
@@ -115,4 +133,5 @@ async def generate_operational_order(
         return response.text
     except Exception as e:
         logger.error(f"Gemini API error: {e}")
-        return f"Error generating operational order: {str(e)}"
+        # Properly reject the request so the frontend can display an error state
+        raise HTTPException(status_code=502, detail=f"Failed to generate AI order. Check API Key configuration. Error: {str(e)}")

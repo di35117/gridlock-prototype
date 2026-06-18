@@ -31,9 +31,10 @@ from modules.learning_engine.router import router as learning_engine_router
 from modules.learning_engine.service import autonomous_event_learning_scan
 from modules.routing_engine.router import router as routing_engine_router
 from modules.osint_harvester.router import router as osint_harvester_router
-
-# NEW: Import the WebSocket Router
 from modules.websockets.router import router as websocket_router 
+
+# NEW: Import the CCTV Integration Hub
+from modules.cctv_ingestion.router import router as cctv_ingestion_router
 
 scheduler = AsyncIOScheduler()
 
@@ -85,6 +86,7 @@ app.include_router(routing_engine_router)
 app.include_router(learning_engine_router)
 app.include_router(ai_copilot_router)
 app.include_router(osint_harvester_router)
-
-# NEW: Register the WebSocket endpoint
 app.include_router(websocket_router)
+
+# NEW: Register the CCTV endpoint
+app.include_router(cctv_ingestion_router)

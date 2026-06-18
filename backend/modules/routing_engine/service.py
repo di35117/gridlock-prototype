@@ -1,9 +1,11 @@
 import logging
-import os
 import networkx as nx
 import osmnx as ox
 from sqlalchemy import text
 from database import engine
+
+# Import the cache path directly from config
+from config import BENGALURU_GRAPH_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +15,10 @@ _GRAPH_CACHE = None
 def _get_graph():
     global _GRAPH_CACHE
     if _GRAPH_CACHE is None:
-        graph_path = os.getenv("BENGALURU_GRAPH_CACHE", "../data/bengaluru_road_graph.graphml")
-        logger.info(f"Loading road graph from {graph_path}. This will take ~10 seconds on the first request...")
+        logger.info(f"Loading road graph from {BENGALURU_GRAPH_CACHE}. This will take ~10 seconds on the first request...")
         try:
             # Load graph and project to standard lat/lon
-            _GRAPH_CACHE = ox.load_graphml(graph_path)
+            _GRAPH_CACHE = ox.load_graphml(BENGALURU_GRAPH_CACHE)
             logger.info("Graph loaded successfully into memory.")
         except Exception as e:
             logger.error(f"Failed to load graphml file: {e}")
@@ -44,7 +45,6 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     G = _get_graph()
     
     # 2. Get origin and destination nodes nearest to the provided coordinates
-    # osmnx uses (X, Y) which is (longitude, latitude)
     orig_node = ox.distance.nearest_nodes(G, X=o_lon, Y=o_lat)
     dest_node = ox.distance.nearest_nodes(G, X=d_lon, Y=d_lat)
     
@@ -52,11 +52,10 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     construction_coords = await _get_construction_coordinates(corridor)
     blocked_nodes = []
     if construction_coords:
-        # Pass lists of X and Y to nearest_nodes
         lons = [c[1] for c in construction_coords]
         lats = [c[0] for c in construction_coords]
         blocked_nodes = ox.distance.nearest_nodes(G, X=lons, Y=lats)
-        # Ensure it's a flat list and remove duplicates
+        
         if not isinstance(blocked_nodes, list):
             blocked_nodes = [blocked_nodes]
         blocked_nodes = list(set(blocked_nodes))
@@ -69,15 +68,14 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     try:
         route = nx.shortest_path(G_safe, orig_node, dest_node, weight='length')
         status = "Optimal Diversion Found"
-    except nx.NetworkXNoPath:
-        logger.warning("No safe path exists avoiding all construction. Falling back to shortest path through construction.")
+    except (nx.NetworkXNoPath, nx.NodeNotFound):  # FIX: Catch NodeNotFound as well
+        logger.warning("No safe path exists avoiding all construction (or origin/destination itself was blocked). Falling back to shortest path through construction.")
         route = nx.shortest_path(G, orig_node, dest_node, weight='length')
         status = "Warning: Forced Path (Construction Unavoidable)"
 
     # 6. Format the route as a GeoJSON LineString for the React frontend
     geojson_coords = []
     for node in route:
-        # GeoJSON strictly requires [longitude, latitude]
         geojson_coords.append([G.nodes[node]['x'], G.nodes[node]['y']])
         
     route_geojson = {
@@ -91,20 +89,23 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     
     # 7. Identify Barricade Points (Nodes immediately preceding the blocked zones)
     barricade_points = []
+    blocked_set = set(blocked_nodes)  # FIX: Precompute set for O(1) lookups
+    
     for blocked in blocked_nodes:
-        # Find neighbors of the blocked node in the ORIGINAL graph
-        for neighbor in G.neighbors(blocked):
-            if neighbor not in blocked_nodes:
+        # FIX: Use all_neighbors to catch upstream intersections on directed graphs
+        for neighbor in nx.all_neighbors(G, blocked):
+            if neighbor not in blocked_set:
                 barricade_points.append({
                     "lat": G.nodes[neighbor]['y'],
                     "lon": G.nodes[neighbor]['x']
                 })
+                
     # De-duplicate barricades based on coordinate pairs
     unique_barricades = list({(b["lat"], b["lon"]): b for b in barricade_points}.values())
 
     return {
         "status": status,
         "route_geojson": route_geojson,
-        "barricade_points": unique_barricades[:15], # Cap at 15 for frontend performance
+        "barricade_points": unique_barricades[:15], 
         "blocked_construction_nodes": len(blocked_nodes)
     }

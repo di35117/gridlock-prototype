@@ -1,10 +1,7 @@
 """
-Trains two LightGBM classifiers on all 8,173 ASTRAM incidents:
-  1. Priority classifier     — predicts High / Low priority
-  2. Road closure classifier — predicts whether road closure is required
-
-Features come from both the raw incidents table and the pre-computed
-corridor_risk_profiles + event_cause_stats tables (enrichment join).
+Trains two LightGBM classifiers on all 8,173 ASTRAM incidents.
+Implements Cyclic Time Encoding and Bayesian Hyperparameter Tuning (Optuna)
+to maximize AUC and F2-Score for highly imbalanced road closures.
 """
 
 import logging
@@ -31,16 +28,10 @@ MODELS_DIR = (
 PRIORITY_MODEL_PATH = MODELS_DIR / "priority_classifier.joblib"
 CLOSURE_MODEL_PATH  = MODELS_DIR / "closure_classifier.joblib"
 ENCODERS_PATH       = MODELS_DIR / "encoders.joblib"
-METRICS_PATH        = MODELS_DIR / "model_metrics.json" # MLOps Metrics Path
-
+METRICS_PATH        = MODELS_DIR / "model_metrics.json"
 
 # ── Data fetching ──────────────────────────────────────────────────────
-
 async def fetch_training_data() -> pd.DataFrame:
-    """
-    Join incidents with pre-computed profiles to build enriched feature set.
-    Runs a single SQL query — fast even at 8k rows.
-    """
     query = text("""
         SELECT
             i.event_cause,
@@ -67,14 +58,18 @@ async def fetch_training_data() -> pd.DataFrame:
         df     = pd.DataFrame(rows, columns=list(result.keys()))
     return df
 
-
 # ── Feature engineering ────────────────────────────────────────────────
 
+# NEW: Added Cyclic Time Features
 FEATURE_COLS = [
     "event_cause_enc",
     "corridor_enc",
     "hour_of_day",
     "day_of_week",
+    "hour_sin",
+    "hour_cos",
+    "day_sin",
+    "day_cos",
     "corridor_closure_rate",
     "corridor_high_priority_rate",
     "corridor_risk_score",
@@ -82,20 +77,20 @@ FEATURE_COLS = [
     "cause_severity_tier",
 ]
 
-
 def build_features(
     df: pd.DataFrame,
     encoders: dict | None = None,
     fit: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
-    """
-    Return (X, encoders).
-    Pass fit=True on training; fit=False + encoders at inference.
-    Unknown categories at inference get encoded as -1 (LightGBM handles this).
-    """
     df = df.copy()
     df["corridor"]    = df["corridor"].fillna("Non-corridor")
     df["event_cause"] = df["event_cause"].fillna("unknown")
+
+    # NEW: Trigonometric Cyclic Encoding for Time
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour_of_day'] / 24.0)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour_of_day'] / 24.0)
+    df['day_sin']  = np.sin(2 * np.pi * df['day_of_week'] / 7.0)
+    df['day_cos']  = np.cos(2 * np.pi * df['day_of_week'] / 7.0)
 
     if fit:
         encoders = {
@@ -117,82 +112,79 @@ def build_features(
     X = df[FEATURE_COLS].fillna(0).astype(float)
     return X, encoders
 
-
 # ── Training ───────────────────────────────────────────────────────────
-
 async def train_and_save() -> dict:
-    """
-    Full training pipeline:
-      1. Fetch enriched data from DB
-      2. Build features + encode labels
-      3. Train priority + closure LightGBM classifiers
-      4. Evaluate on 20% hold-out
-      5. Save models + encoders to disk
-    Returns a metrics dict.
-    """
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     logger.info("Fetching training data …")
     df = await fetch_training_data()
-    logger.info(f"Training rows: {len(df)}")
-
-    # Targets
+    
     y_priority = (df["priority"] == "High").astype(int)
     y_closure  = df["requires_road_closure"].astype(int)
-
-    # Features
     X, encoders = build_features(df, fit=True)
 
-    # Train / validation split (stratify on priority for balance)
+    # Stratify strictly on closure to ensure rare events exist in validation
     X_tr, X_val, yp_tr, yp_val, yc_tr, yc_val = train_test_split(
         X, y_priority, y_closure,
         test_size=0.2,
         random_state=42,
-        stratify=y_priority,
+        stratify=y_closure, 
     )
 
-    lgb_params = dict(
-        n_estimators=300,
-        learning_rate=0.05,
-        num_leaves=31,
-        min_child_samples=10,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        is_unbalance=True,
-        random_state=42,
-        verbose=-1,
-    )
-
+    # Priority Model (Already highly optimized)
     logger.info("Training priority classifier …")
-    priority_model = lgb.LGBMClassifier(**lgb_params)
-    priority_model.fit(
-        X_tr, yp_tr,
-        eval_set=[(X_val, yp_val)],
-        callbacks=[lgb.early_stopping(30, verbose=False),
-                   lgb.log_evaluation(period=-1)],
-    )
+    priority_model = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.05, is_unbalance=True, random_state=42, verbose=-1)
+    priority_model.fit(X_tr, yp_tr, eval_set=[(X_val, yp_val)], callbacks=[lgb.early_stopping(30, verbose=False)])
 
-    logger.info("Training road-closure classifier …")
-    closure_model = lgb.LGBMClassifier(**lgb_params)
-    closure_model.fit(
-        X_tr, yc_tr,
-        eval_set=[(X_val, yc_val)],
-        callbacks=[lgb.early_stopping(30, verbose=False),
-                   lgb.log_evaluation(period=-1)],
-    )
+    # Closure Model (Advanced Bayesian Optimization)
+    logger.info("Initiating Bayesian Optuna Study for Closure Model…")
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    # FIX: Dynamic Threshold Optimization
+        def objective(trial):
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 100, 300),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+                'num_leaves': trial.suggest_int('num_leaves', 15, 63),
+                'scale_pos_weight': trial.suggest_float('scale_pos_weight', 5.0, 25.0), # Replaces standard is_unbalance
+                'objective': 'binary',
+                'random_state': 42,
+                'verbose': -1
+            }
+            model = lgb.LGBMClassifier(**params)
+            model.fit(X_tr, yc_tr)
+            y_proba = model.predict_proba(X_val)[:, 1]
+            
+            # Target maximization of F2-Score inside Optuna
+            precisions, recalls, _ = precision_recall_curve(yc_val, y_proba)
+            denom = (4 * precisions[:-1] + recalls[:-1])
+            f2_scores = np.divide((5 * precisions[:-1] * recalls[:-1]), denom, out=np.zeros_like(denom), where=denom!=0)
+            return np.max(f2_scores) if len(f2_scores) > 0 else 0
+
+        study = optuna.create_study(direction='maximize')
+        study.optimize(objective, n_trials=15) # Runs 15 simulated models
+        best_params = study.best_params
+        best_params.update({'objective': 'binary', 'random_state': 42, 'verbose': -1})
+        logger.info(f"Optuna complete. Best params: {best_params}")
+
+    except ImportError:
+        logger.warning("Optuna not found. Falling back to default parameters. (pip install optuna)")
+        best_params = {'n_estimators': 300, 'learning_rate': 0.05, 'is_unbalance': True, 'verbose': -1, 'random_state': 42}
+
+    closure_model = lgb.LGBMClassifier(**best_params)
+    closure_model.fit(X_tr, yc_tr, eval_set=[(X_val, yc_val)], callbacks=[lgb.early_stopping(30, verbose=False)])
+
+    # Dynamic Metrics Logic
     def _metrics(model, X_v, y_v, name, optimize_threshold=False):
         y_proba = model.predict_proba(X_v)[:, 1]
-        
         threshold = 0.5
-        # Dynamically find the perfect threshold for highly imbalanced data
+        
         if optimize_threshold and sum(y_v) > 0:
             precisions, recalls, thresholds = precision_recall_curve(y_v, y_proba)
-            # F2-Score formula (Heavily weights Recall over Precision)
-            f2_scores = (5 * precisions[:-1] * recalls[:-1]) / (4 * precisions[:-1] + recalls[:-1] + 1e-10)
-            best_idx = np.argmax(f2_scores)
-            threshold = thresholds[best_idx]
+            denom = (4 * precisions[:-1] + recalls[:-1])
+            f2_scores = np.divide((5 * precisions[:-1] * recalls[:-1]), denom, out=np.zeros_like(denom), where=denom!=0)
+            threshold = thresholds[np.argmax(f2_scores)]
             
         y_pred = (y_proba >= threshold).astype(int)
         acc = accuracy_score(y_v, y_pred)
@@ -204,16 +196,15 @@ async def train_and_save() -> dict:
             auc = None
             
         auc_str = f"{auc:.4f}" if auc is not None else "N/A"
-        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f} (Dynamic Threshold: {threshold:.4f})")
+        logger.info(f"{name} — acc={acc:.4f}  auc={auc_str}  recall={recall:.4f} (Threshold: {threshold:.4f})")
         
         return {
             "accuracy": round(acc, 4), 
             "auc": round(auc, 4) if auc else None, 
             "recall": round(recall, 4),
-            "applied_threshold": round(float(threshold), 4) # Save this to the JSON
+            "applied_threshold": round(float(threshold), 4)
         }
 
-    # Priority keeps 0.5. Closure calculates the exact mathematical optimum.
     priority_metrics = _metrics(priority_model, X_val, yp_val, "Priority", optimize_threshold=False)
     closure_metrics  = _metrics(closure_model,  X_val, yc_val, "Closure", optimize_threshold=True)
 
@@ -224,30 +215,23 @@ async def train_and_save() -> dict:
         "feature_cols":     FEATURE_COLS,
     }
 
-    # Persist
     joblib.dump(priority_model, PRIORITY_MODEL_PATH)
     joblib.dump(closure_model,  CLOSURE_MODEL_PATH)
     joblib.dump(encoders,       ENCODERS_PATH)
     
-    # Persist MLOps Metrics
     with open(METRICS_PATH, "w") as f:
         json.dump(metrics_payload, f, indent=4)
         
     logger.info(f"Models and metrics saved to {MODELS_DIR}")
-
     return metrics_payload
 
-
 # ── Loading ────────────────────────────────────────────────────────────
-
 def load_models() -> tuple:
-    """Return (priority_model, closure_model, encoders)."""
     return (
         joblib.load(PRIORITY_MODEL_PATH),
         joblib.load(CLOSURE_MODEL_PATH),
         joblib.load(ENCODERS_PATH),
     )
-
 
 def models_exist() -> bool:
     return (

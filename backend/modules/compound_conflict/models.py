@@ -10,8 +10,10 @@ class ConflictRequest(BaseModel):
 
 class ConflictResponse(BaseModel):
     corridor: str
+    event_cause: str
     base_risk_score: float
     construction_incident_count: int
+    cause_closure_rate: float
     compound_multiplier: float
     compound_risk_score: float
     risk_level: str

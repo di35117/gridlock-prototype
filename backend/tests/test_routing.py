@@ -12,10 +12,8 @@ async def test_routing_engine_endpoint(mock_diversion, async_client):
     }
     response = await async_client.post("/api/routing/diversion", json={
         "corridor": "Silk Board", 
-        "o_lat": 12.91, 
-        "o_lon": 77.51,
-        "d_lat": 12.93,
-        "d_lon": 77.53
+        "latitude": 12.91, 
+        "longitude": 77.51
     })
     
     assert response.status_code == 200

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 
 @pytest.mark.asyncio
-@patch('modules.routing_engine.service.calculate_diversion')
+@patch('modules.routing_engine.service.calculate_diversion') 
 async def test_routing_engine_endpoint(mock_diversion, async_client):
     mock_diversion.return_value = {
         "route_geojson": {"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[77.5, 12.9], [77.6, 12.9]]}},

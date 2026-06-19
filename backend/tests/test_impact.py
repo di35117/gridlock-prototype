@@ -2,9 +2,9 @@ import pytest
 from unittest.mock import patch
 
 @pytest.mark.asyncio
-@patch('modules.impact_forecaster.service._predict_internal') 
-async def test_forecast_predict_endpoint(mock_lgbm, async_client):
-    mock_lgbm.return_value = {
+@patch('modules.impact_forecaster.service.predict') # FIX: Patched the correct public function
+async def test_forecast_predict_endpoint(mock_predict, async_client):
+    mock_predict.return_value = {
         "corridor_risk_score": 75.0,
         "closure_probability": 0.88,
         "priority_prediction": "Critical",

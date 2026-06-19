@@ -4,12 +4,10 @@ import uuid
 from datetime import datetime, timedelta
 from fastapi import HTTPException
 
-# Import your existing Gemini setup and other services
-from modules.ai_copilot.service import get_gemini_model
+# Import the NEW client setup from ai_copilot
+from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.learning_engine.service import register_active_event
-
-# NEW: Import the WebSocket Notifier
 from modules.websockets.manager import notifier
 
 logger = logging.getLogger(__name__)
@@ -17,7 +15,8 @@ logger = logging.getLogger(__name__)
 async def process_osint_intel(raw_text: str, source: str) -> dict:
     logger.info(f"Processing OSINT intel from {source}...")
     
-    model = get_gemini_model()
+    # Initialize the modern GenAI Client
+    client = get_gemini_client()
     
     # 1. Force Gemini to act as a Named Entity Recognition (NER) extractor
     prompt = f"""
@@ -44,9 +43,14 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     """
     
     try:
-        response = await model.generate_content_async(prompt)
+        # Execute async generation using the new Google GenAI SDK
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         raw_output = response.text.strip()
         
+        # Clean formatting if Gemini wraps it in code blocks
         if raw_output.startswith("```json"):
             raw_output = raw_output[7:-3]
         elif raw_output.startswith("```"):
@@ -64,26 +68,35 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     end_time = start_time + timedelta(hours=extracted_data.get("duration_hours", 4))
     
     # 3. Autonomously Forecast the Risk
-    forecast = await predict(
-        event_cause=extracted_data["event_cause"],
-        corridor=extracted_data["corridor"],
-        hour_of_day=start_time.hour,
-        day_of_week=start_time.weekday()
-    )
-    predicted_risk = forecast["corridor_risk_score"]
+    try:
+        forecast = await predict(
+            event_cause=extracted_data["event_cause"],
+            corridor=extracted_data["corridor"],
+            hour_of_day=start_time.hour,
+            day_of_week=start_time.weekday()
+        )
+        predicted_risk = forecast["corridor_risk_score"]
+    except Exception as e:
+        logger.error(f"Impact Forecaster failed during OSINT pipeline: {e}")
+        raise HTTPException(status_code=500, detail="Failed to forecast risk.")
     
     # 4. Autonomously Register the Event into the Learning Engine
     event_id = f"OSINT-{uuid.uuid4().hex[:6].upper()}"
     
-    registration_result = await register_active_event(
-        event_id=event_id,
-        corridor=extracted_data["corridor"],
-        event_cause=extracted_data["event_cause"],
-        predicted_risk=predicted_risk,
-        expected_end_time=end_time
-    )
+    try:
+        registration_result = await register_active_event(
+            event_id=event_id,
+            corridor=extracted_data["corridor"],
+            event_cause=extracted_data["event_cause"],
+            predicted_risk=predicted_risk,
+            expected_end_time=end_time
+        )
+        reg_message = registration_result["message"]
+    except Exception as e:
+        logger.error(f"Failed to register OSINT event to Learning Engine: {e}")
+        reg_message = "Event queued for dashboard, but failed to register in Learning Engine."
 
-    # 5. NEW: Real-Time WebSocket Broadcast to React Dashboard
+    # 5. Real-Time WebSocket Broadcast to React Dashboard
     alert_payload = {
         "type": "CRITICAL_ALERT",
         "timestamp": datetime.now().isoformat(),
@@ -94,6 +107,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         "message": f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required.",
         "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
     }
+    
     await notifier.broadcast_alert(alert_payload)
 
     return {
@@ -107,5 +121,5 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
             "end_time": end_time.isoformat()
         },
         "forecasted_risk": predicted_risk,
-        "registration_message": registration_result["message"]
+        "registration_message": reg_message
     }

@@ -3,10 +3,12 @@ from sqlalchemy import text
 from database import engine
 from datetime import datetime, timedelta
 
-# NEW: Import the WebSocket Notifier
 from modules.websockets.manager import notifier
 
 logger = logging.getLogger(__name__)
+
+# BUG FIX: State tracker to prevent the APScheduler from spamming the UI during long demos
+_demo_alert_fired = False
 
 async def check_for_surge(corridor: str, current_incidents: int) -> dict:
     """The core mathematical calculator (Z-Score logic)."""
@@ -26,11 +28,9 @@ async def check_for_surge(corridor: str, current_incidents: int) -> dict:
     mean = float(row.avg_hourly_baseline or 0.0)
     std = float(row.std_hourly_baseline or 1.0)
     
-    # Prevent division by zero if a corridor has zero variance
     if std == 0:
         std = 1.0
 
-    # Calculate Z-Score: (X - Mean) / Standard Deviation
     z_score = (current_incidents - mean) / std
     is_surge = z_score > 2.0  # 2 standard deviations = anomaly
     
@@ -56,13 +56,17 @@ async def run_autonomous_surge_scan(is_demo_mode: bool = True):
     """
     APScheduler Daemon: Wakes up every 5 minutes to scan live ASTRAM data.
     """
+    global _demo_alert_fired
     logger.info("[SURGE DAEMON] Waking up to scan ASTRAM live feeds...")
     
-    # In a real system, you would query the live incidents from the last 60 mins
     live_data = [] 
     
-    # This block simulates a live ASTRAM stream catching a sudden gathering.
     if not live_data and is_demo_mode:
+        # BUG FIX: One-shot guard
+        if _demo_alert_fired:
+            logger.info("[SURGE DAEMON] Demo alert already fired this session, skipping to prevent UI spam.")
+            return
+
         logger.info("[SURGE DAEMON] No live data found. Simulating live ASTRAM stream for demo...")
         demo_corridor = "Mysore Road"
         demo_incidents = 85  # Intentionally high to trigger the > 2.0 Z-Score
@@ -73,7 +77,6 @@ async def run_autonomous_surge_scan(is_demo_mode: bool = True):
                 logger.warning(f"[AUTONOMOUS TRIGGER] Surge detected on {demo_corridor}: Z-Score {surge_result['z_score']}")
                 logger.critical(f"[DISPATCH ALERT] {surge_result['automated_action']}")
                 
-                # NEW: Real-Time WebSocket Broadcast to React Dashboard
                 alert_payload = {
                     "type": "SURGE_ALERT",
                     "timestamp": datetime.now().isoformat(),
@@ -85,6 +88,9 @@ async def run_autonomous_surge_scan(is_demo_mode: bool = True):
                     "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
                 }
                 await notifier.broadcast_alert(alert_payload)
+                
+                # Mark as fired so it never triggers again during this session
+                _demo_alert_fired = True
 
         except Exception as e:
             logger.error(f"Demo surge check failed: {e}")
@@ -98,7 +104,6 @@ async def run_autonomous_surge_scan(is_demo_mode: bool = True):
                 logger.warning(f"[AUTONOMOUS TRIGGER] Surge detected on {row.corridor}: Z-Score {surge_result['z_score']}")
                 logger.critical(f"[DISPATCH ALERT] {surge_result['automated_action']}")
                 
-                # Push alert for real data
                 alert_payload = {
                     "type": "SURGE_ALERT",
                     "timestamp": datetime.now().isoformat(),

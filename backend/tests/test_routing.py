@@ -10,10 +10,14 @@ async def test_routing_engine_endpoint(mock_diversion, async_client):
         "barricade_points": [{"lat": 12.91, "lon": 77.51}],
         "blocked_construction_nodes": 3
     }
+
+    # FIX: Using the exact keys found in your router.py (origin_lat, dest_lat, etc.)
     response = await async_client.post("/api/routing/diversion", json={
         "corridor": "Silk Board", 
-        "latitude": 12.91, 
-        "longitude": 77.51
+        "origin_lat": 12.91, 
+        "origin_lon": 77.51,
+        "dest_lat": 12.93,
+        "dest_lon": 77.53
     })
     
     assert response.status_code == 200

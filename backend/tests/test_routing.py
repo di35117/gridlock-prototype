@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 
 @pytest.mark.asyncio
-@patch('modules.routing_engine.service.calculate_tactical_diversion') 
+@patch('modules.routing_engine.service.calculate_tactical_diversion')
 async def test_routing_engine_endpoint(mock_diversion, async_client):
     mock_diversion.return_value = {
         "status": "Optimal Diversion Found",
@@ -10,9 +10,12 @@ async def test_routing_engine_endpoint(mock_diversion, async_client):
         "barricade_points": [{"lat": 12.91, "lon": 77.51}],
         "blocked_construction_nodes": 3
     }
-
     response = await async_client.post("/api/routing/diversion", json={
-        "corridor": "Silk Board", "latitude": 12.91, "longitude": 77.51
+        "corridor": "Silk Board", 
+        "o_lat": 12.91, 
+        "o_lon": 77.51,
+        "d_lat": 12.93,
+        "d_lon": 77.53
     })
     
     assert response.status_code == 200

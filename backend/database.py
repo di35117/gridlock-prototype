@@ -2,11 +2,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from config import DATABASE_URL
 
+# FIX: Massively expanded the pool to survive the Locust swarm without queuing
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=100,         # Increased from 10
+    max_overflow=200,      # Increased from 20
+    pool_timeout=30,       # Give requests 30 seconds to find a connection before failing
     pool_pre_ping=True,
 )
 

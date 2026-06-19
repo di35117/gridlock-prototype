@@ -3,7 +3,8 @@ import json
 import uuid
 from datetime import datetime, timedelta
 
-from modules.ai_copilot.service import get_gemini_model
+# Import the NEW client setup
+from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.websockets.manager import notifier
 from modules.learning_engine.service import register_active_event
@@ -15,15 +16,13 @@ async def process_cctv_payload(raw_payload: dict):
 
     normalized_data = {}
 
-    # 1. THE FAST PATH (Standard Schema Match)
     required_keys = {"corridor", "event_cause", "latitude", "longitude"}
     if required_keys.issubset(raw_payload.keys()):
         logger.info("[CCTV] Payload matches BTP standard schema. Bypassing LLM translation.")
         normalized_data = raw_payload
     else:
-        # 2. THE AI TRANSLATION PATH (Dynamic Normalization)
         logger.info("[CCTV] Non-standard schema detected. Routing to Gemini Data Translator...")
-        model = get_gemini_model()
+        client = get_gemini_client()
         
         prompt = f"""
         You are a Universal Data Translator for the Bengaluru Traffic Police API.
@@ -49,10 +48,13 @@ async def process_cctv_payload(raw_payload: dict):
         }}
         """
         try:
-            response = await model.generate_content_async(prompt)
+            # Generate using the new SDK
+            response = await client.aio.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt
+            )
             raw_output = response.text.strip()
             
-            # Clean formatting if Gemini wraps it in code blocks
             if raw_output.startswith("```json"): 
                 raw_output = raw_output[7:-3]
             elif raw_output.startswith("```"): 
@@ -64,7 +66,7 @@ async def process_cctv_payload(raw_payload: dict):
             logger.error(f"[CCTV] Failed to normalize proprietary data: {e}")
             return
 
-    # 3. Mathematical Forecasting (LightGBM)
+    # Mathematical Forecasting (LightGBM)
     now = datetime.now()
     try:
         forecast = await predict(
@@ -80,9 +82,7 @@ async def process_cctv_payload(raw_payload: dict):
         logger.error(f"[CCTV] Impact Forecaster failed: {e}")
         return
 
-    # 4. Autonomously Register to the Learning Engine (Redis Queue)
-    # CCTV events (accidents/breakdowns) generally clear in ~2 hours. 
-    # We queue the learning engine to check Google Maps 2 hours from now.
+    # Queue Learning Engine
     event_id = f"CCTV-{uuid.uuid4().hex[:6].upper()}"
     end_time = now + timedelta(hours=2)
     
@@ -98,7 +98,7 @@ async def process_cctv_payload(raw_payload: dict):
     except Exception as e:
         logger.error(f"[CCTV] Failed to register event to Learning Engine: {e}")
 
-    # 5. Blast the Real-Time Alert to the React Dashboard (WebSocket)
+    # WebSocket Broadcast
     alert_payload = {
         "type": "CCTV_ANOMALY",
         "timestamp": now.isoformat(),

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from fastapi import HTTPException
 
-# Import the NEW client setup from ai_copilot
+# Import the modern client setup
 from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.learning_engine.service import register_active_event
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 async def process_osint_intel(raw_text: str, source: str) -> dict:
     logger.info(f"Processing OSINT intel from {source}...")
     
-    # Initialize the modern GenAI Client
     client = get_gemini_client()
     
     # 1. Force Gemini to act as a Named Entity Recognition (NER) extractor
@@ -43,14 +42,12 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     """
     
     try:
-        # Execute async generation using the new Google GenAI SDK
         response = await client.aio.models.generate_content(
             model='gemini-1.5-flash',
             contents=prompt
         )
         raw_output = response.text.strip()
         
-        # Clean formatting if Gemini wraps it in code blocks
         if raw_output.startswith("```json"):
             raw_output = raw_output[7:-3]
         elif raw_output.startswith("```"):
@@ -75,7 +72,8 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
             hour_of_day=start_time.hour,
             day_of_week=start_time.weekday()
         )
-        predicted_risk = forecast["corridor_risk_score"]
+        # BUG FIX: Standardized to 'compound_risk_score' to match CCTV and Learning Engine math
+        predicted_risk = forecast["compound_risk_score"]
     except Exception as e:
         logger.error(f"Impact Forecaster failed during OSINT pipeline: {e}")
         raise HTTPException(status_code=500, detail="Failed to forecast risk.")

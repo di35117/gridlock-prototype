@@ -2,9 +2,8 @@ import pytest
 from unittest.mock import patch
 
 @pytest.mark.asyncio
-@patch('modules.impact_forecaster.service.predict') 
+@patch('modules.impact_forecaster.service.predict')
 async def test_forecast_predict_endpoint(mock_predict, async_client):
-    # FIX: Provide the full dictionary of fields that the Pydantic model expects
     mock_predict.return_value = {
         "event_cause": "vehicle_breakdown",
         "corridor": "ORR East",
@@ -19,7 +18,7 @@ async def test_forecast_predict_endpoint(mock_predict, async_client):
         "corridor_closure_rate": 0.5,
         "corridor_high_priority_rate": 0.5,
         "cause_closure_rate": 0.5,
-        "cause_severity_tier": "High",
+        "cause_severity_tier": 1,  # FIX: Pydantic strictly expects an integer here
         "compound_risk_score": 0.85,
         "known_corridor": True,
         "known_cause": True

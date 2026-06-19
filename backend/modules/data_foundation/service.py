@@ -100,7 +100,7 @@ async def _load_incidents(df: pd.DataFrame) -> int:
         "start_datetime", "resolved_datetime", "closed_datetime",
         "priority", "requires_road_closure", "status",
         "corridor", "zone", "police_station", "junction",
-        "address", "description", "veh_type", "latitude", "longitude", # Added veh_type
+        "address", "description", "veh_type", "latitude", "longitude",
         "assigned_to_police_id", "closed_by_id",
         "direction", "route_path",
         "hour_of_day", "day_of_week", "time_to_close_hours",

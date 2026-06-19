@@ -21,6 +21,7 @@ from database import init_db
 from modules.data_foundation import service as data_foundation_service
 from modules.data_foundation.router import router as data_foundation_router
 from modules.impact_forecaster import trainer as forecaster_trainer
+from modules.impact_forecaster import service as forecaster_service  # NEW IMPORT
 from modules.impact_forecaster.router import router as impact_forecaster_router
 from modules.compound_conflict.router import router as compound_conflict_router
 from modules.ai_copilot.router import router as ai_copilot_router
@@ -32,8 +33,6 @@ from modules.learning_engine.service import autonomous_event_learning_scan
 from modules.routing_engine.router import router as routing_engine_router
 from modules.osint_harvester.router import router as osint_harvester_router
 from modules.websockets.router import router as websocket_router 
-
-# NEW: Import the CCTV Integration Hub
 from modules.cctv_ingestion.router import router as cctv_ingestion_router
 
 scheduler = AsyncIOScheduler()
@@ -50,11 +49,15 @@ async def lifespan(app: FastAPI):
     if not forecaster_trainer.models_exist():
         logger.info("No trained forecaster models found — training now …")
         metrics = await forecaster_trainer.train_and_save()
+        
+        # FIX: Load models into memory immediately to prevent cold-start crashes
+        forecaster_service.reload_models()
+        
         logger.info(f"Impact Forecaster trained: {metrics}")
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
         
-    # Start Autonomous Monitoring Daemon
+    # Start Autonomous Monitoring Daemons
     scheduler.add_job(run_autonomous_surge_scan, 'interval', minutes=5)
     scheduler.add_job(autonomous_event_learning_scan, 'interval', minutes=5)
     scheduler.start()
@@ -86,7 +89,5 @@ app.include_router(routing_engine_router)
 app.include_router(learning_engine_router)
 app.include_router(ai_copilot_router)
 app.include_router(osint_harvester_router)
-app.include_router(websocket_router)
-
-# NEW: Register the CCTV endpoint
+app.include_router(websocket_router) 
 app.include_router(cctv_ingestion_router)

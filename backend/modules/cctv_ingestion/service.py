@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 
-# Import the NEW client setup
+# Import the modern Google GenAI Client and other internal modules
 from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.websockets.manager import notifier
@@ -12,15 +12,22 @@ from modules.learning_engine.service import register_active_event
 logger = logging.getLogger(__name__)
 
 async def process_cctv_payload(raw_payload: dict):
+    # BUG FIX 1: Guard against malformed JSON (arrays, strings, ints) silently crashing the task
+    if not isinstance(raw_payload, dict):
+        logger.error(f"[CCTV] Rejected non-dict payload: {type(raw_payload)}. Payload must be a JSON object.")
+        return
+        
     logger.info("Evaluating CCTV schema...")
 
     normalized_data = {}
 
+    # 1. THE FAST PATH (Standard Schema Match)
     required_keys = {"corridor", "event_cause", "latitude", "longitude"}
     if required_keys.issubset(raw_payload.keys()):
         logger.info("[CCTV] Payload matches BTP standard schema. Bypassing LLM translation.")
         normalized_data = raw_payload
     else:
+        # 2. THE AI TRANSLATION PATH (Dynamic Normalization)
         logger.info("[CCTV] Non-standard schema detected. Routing to Gemini Data Translator...")
         client = get_gemini_client()
         
@@ -48,13 +55,14 @@ async def process_cctv_payload(raw_payload: dict):
         }}
         """
         try:
-            # Generate using the new SDK
+            # Generate using the NEW google-genai SDK
             response = await client.aio.models.generate_content(
                 model='gemini-1.5-flash',
                 contents=prompt
             )
             raw_output = response.text.strip()
             
+            # Clean formatting if Gemini wraps it in code blocks
             if raw_output.startswith("```json"): 
                 raw_output = raw_output[7:-3]
             elif raw_output.startswith("```"): 
@@ -66,7 +74,7 @@ async def process_cctv_payload(raw_payload: dict):
             logger.error(f"[CCTV] Failed to normalize proprietary data: {e}")
             return
 
-    # Mathematical Forecasting (LightGBM)
+    # 3. Mathematical Forecasting (LightGBM)
     now = datetime.now()
     try:
         forecast = await predict(
@@ -82,7 +90,7 @@ async def process_cctv_payload(raw_payload: dict):
         logger.error(f"[CCTV] Impact Forecaster failed: {e}")
         return
 
-    # Queue Learning Engine
+    # 4. Queue Learning Engine
     event_id = f"CCTV-{uuid.uuid4().hex[:6].upper()}"
     end_time = now + timedelta(hours=2)
     
@@ -98,7 +106,7 @@ async def process_cctv_payload(raw_payload: dict):
     except Exception as e:
         logger.error(f"[CCTV] Failed to register event to Learning Engine: {e}")
 
-    # WebSocket Broadcast
+    # 5. WebSocket Broadcast
     alert_payload = {
         "type": "CCTV_ANOMALY",
         "timestamp": now.isoformat(),
@@ -110,5 +118,9 @@ async def process_cctv_payload(raw_payload: dict):
         "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
     }
     
-    await notifier.broadcast_alert(alert_payload)
-    logger.info(f"[CCTV] Threat {event_id} broadcasted to Command Center WebSockets.")
+    # BUG FIX 2: Added Try/Except block around the WebSocket broadcast so failures are logged
+    try:
+        await notifier.broadcast_alert(alert_payload)
+        logger.info(f"[CCTV] Threat {event_id} broadcasted to Command Center WebSockets.")
+    except Exception as e:
+        logger.error(f"[CCTV] Failed to broadcast alert: {e}")

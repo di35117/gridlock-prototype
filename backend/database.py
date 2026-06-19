@@ -1,14 +1,19 @@
+import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from config import DATABASE_URL
 
-# FIX: Massively expanded the pool to survive the Locust swarm without queuing
+# Dynamically set pool sizes based on environment. 
+# Defaults to the safe Windows limits (20/10) for local dev.
+POOL_SIZE = int(os.getenv("DB_POOL_SIZE", 20))
+MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", 10))
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=100,         # Increased from 10
-    max_overflow=200,      # Increased from 20
-    pool_timeout=30,       # Give requests 30 seconds to find a connection before failing
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_timeout=60,
     pool_pre_ping=True,
 )
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from modules.routing_engine import service
-from modules.routing_engine.models import RoutingRequest, RoutingResponse
+from modules.routing_engine.models import RoutingRequest, RoutingResponse, NetworkMetricsResponse
 
 router = APIRouter(prefix="/api/routing", tags=["Tactical Routing Engine"])
 
@@ -19,3 +19,15 @@ async def get_diversion(request: RoutingRequest):
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Routing failed: {str(e)}")
+
+@router.get("/network/metrics", response_model=NetworkMetricsResponse)
+async def get_network_metrics():
+    """
+    Returns the city road network as a GeoJSON object with real-time 
+    ML risk scores embedded for MapLibre data-driven styling.
+    """
+    try:
+        geojson_data = await service.generate_network_metrics_geojson()
+        return geojson_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate network metrics: {str(e)}")

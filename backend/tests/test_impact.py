@@ -97,7 +97,9 @@ async def test_forecast_predict_endpoint_success(mock_predict, async_client):
         "cause_closure_rate": 0.5,
         "cause_severity_tier": 1, 
         "compound_risk_score": 0.85,
-        "risk_level": "High"
+        "risk_level": "High",
+        "known_corridor": True,
+        "known_cause": True
     }
 
     payload = {

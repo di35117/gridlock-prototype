@@ -1,9 +1,10 @@
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 from unittest.mock import patch, AsyncMock
 from database import engine
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def cleanup_and_seed_tables():
     """
     Cleans up all data foundation tables before each test and seeds isolated mock data.

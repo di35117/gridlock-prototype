@@ -3,6 +3,7 @@ import React, { useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { Activity, ShieldAlert, Cpu } from "lucide-react";
 import BengaluruMap from "./components/BengaluruMap";
+import LiveIntelFeed from "./components/LiveIntelFeed";
 import { connectSystemWebSocket } from "./services/websocket";
 import { useSystemStore } from "./store/useSystemStore";
 
@@ -10,7 +11,7 @@ function App() {
   const { activeSurge, copilotOrder, isProcessing } = useSystemStore();
 
   useEffect(() => {
-    connectSystemWebSocket(); // Start listening for surges on load
+    connectSystemWebSocket(); // Start listening for surges and intel on load
   }, []);
 
   return (
@@ -35,14 +36,14 @@ function App() {
           <BengaluruMap />
         </section>
 
-        {/* Right: AI Copilot & Module Intel Sidebar */}
-        <aside className="w-[450px] bg-gray-800 flex flex-col overflow-hidden shadow-xl z-10">
+        {/* Middle: AI Copilot & Module Intel Sidebar */}
+        <aside className="w-[400px] bg-gray-800 flex flex-col overflow-hidden shadow-xl z-10">
           <div className="p-4 border-b border-gray-700 bg-gray-900 flex items-center text-blue-400">
             <Cpu className="mr-2" size={20} />
             <h2 className="font-semibold tracking-wide">AI TACTICAL COPILOT</h2>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
             {!activeSurge ? (
               <div className="text-center text-gray-500 font-mono mt-10 animate-pulse">
                 Monitoring corridor network...
@@ -98,6 +99,9 @@ function App() {
             )}
           </div>
         </aside>
+
+        {/* Right: The New Live Intel Feed */}
+        <LiveIntelFeed />
       </main>
     </div>
   );

@@ -1,21 +1,3 @@
-# ── Python ──────────────────────────────────────────────
-venv/
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-*.egg
-dist/
-build/
-.eggs/
-*.whl
-
-# ── Environment variables (NEVER commit these) ───────────
-.env
-.env.*
-!.env.example
-
 # ── Data files (too large for git) ───────────────────────
 data/*.csv
 data/*.graphml
@@ -25,44 +7,25 @@ data/*.model
 data/*.parquet
 data/*.feather
 
-# ── ML model artifacts ───────────────────────────────────
-backend/models/saved/
-*.lgbm
-*.pkl
-*.joblib
+# ── Docker ───────────────────────────────────────────────
+docker-compose.override.yml
+redis-data/
 
-# ── Logs ─────────────────────────────────────────────────
+# ── Global Environment variables ─────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Global Logs ──────────────────────────────────────────
 *.log
 logs/
 
-# ── Node / React ─────────────────────────────────────────
-frontend/node_modules/
-frontend/dist/
-frontend/build/
-frontend/.vite/
-
-# ── Docker ───────────────────────────────────────────────
-# Keep docker-compose.yml but ignore override files
-docker-compose.override.yml
-
-# ── IDE ──────────────────────────────────────────────────
+# ── IDE & OS ─────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
-
-# ── Database / cache ─────────────────────────────────────
-*.db
-*.sqlite
-*.sqlite3
-redis-data/
-
-# ── Alembic ──────────────────────────────────────────────
-# Keep migrations folder but ignore local env
-alembic.ini
-
-# ── OS ───────────────────────────────────────────────────
 desktop.ini
 $RECYCLE.BIN/

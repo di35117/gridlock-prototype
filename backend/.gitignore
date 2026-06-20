@@ -1,0 +1,30 @@
+# ── Python ───────────────────────────────────────────────
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# ── ML model artifacts ───────────────────────────────────
+models/saved/
+*.lgbm
+*.pkl
+*.joblib
+
+# ── Database / cache / migrations ────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+alembic.ini
+
+# ── Local Environment variables ──────────────────────────
+.env
+.env.*
+!.env.example

@@ -5,6 +5,7 @@ import { Activity, Cpu } from "lucide-react";
 import BengaluruMap from "./components/BengaluruMap";
 import LiveIntelFeed from "./components/LiveIntelFeed";
 import TacticalResourceDashboard from "./components/TacticalResourceDashboard";
+import CompoundConflictRadar from "./components/CompoundConflictRadar";
 import { connectSystemWebSocket } from "./services/websocket";
 import { useSystemStore } from "./store/useSystemStore";
 
@@ -12,7 +13,7 @@ function App() {
   const { activeSurge, copilotOrder, isProcessing } = useSystemStore();
 
   useEffect(() => {
-    connectSystemWebSocket(); // Start listening for surges and intel on load
+    connectSystemWebSocket();
   }, []);
 
   return (
@@ -37,9 +38,9 @@ function App() {
           <BengaluruMap />
         </section>
 
-        {/* Middle: AI Copilot & Module Intel Sidebar */}
-        <aside className="w-[400px] bg-gray-800 flex flex-col overflow-hidden shadow-xl z-10">
-          <div className="p-4 border-b border-gray-700 bg-gray-900 flex items-center text-blue-400">
+        {/* Middle: AI Copilot & Tactical Sidebar */}
+        <aside className="w-[420px] bg-gray-800 flex flex-col overflow-hidden shadow-xl z-10">
+          <div className="p-4 border-b border-gray-700 bg-gray-900 flex items-center text-blue-400 shrink-0">
             <Cpu className="mr-2" size={20} />
             <h2 className="font-semibold tracking-wide">AI TACTICAL COPILOT</h2>
           </div>
@@ -53,10 +54,10 @@ function App() {
               </div>
             ) : isProcessing ? (
               <div className="space-y-4">
-                <div className="p-3 bg-red-900/30 border border-red-500 rounded text-sm font-mono text-red-400">
+                <div className="p-3 bg-red-900/30 border border-red-500 rounded text-sm font-mono text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]">
                   CRITICAL SURGE DETECTED: {activeSurge.corridor}
                 </div>
-                <div className="text-center text-gray-400 font-mono text-sm animate-pulse">
+                <div className="text-center text-gray-400 font-mono text-sm animate-pulse pt-4">
                   Executing LightGBM Forecaster...
                   <br />
                   Calculating Routing Diversions...
@@ -66,16 +67,19 @@ function App() {
               </div>
             ) : (
               <div className="space-y-4 animate-fade-in">
-                {/* NEW RESOURCE DASHBOARD INJECTED HERE */}
+                {/* 1. Context Awareness Widget */}
+                <CompoundConflictRadar />
+
+                {/* 2. Operations Research Math Widget */}
                 <TacticalResourceDashboard />
 
-                {/* Gemini Markdown Output */}
-                <div className="prose prose-invert prose-sm max-w-none">
+                {/* 3. The LLM Output */}
+                <div className="prose prose-invert prose-sm max-w-none bg-gray-900/50 p-4 rounded-lg border border-gray-700">
                   {copilotOrder ? (
                     <ReactMarkdown>{copilotOrder}</ReactMarkdown>
                   ) : (
-                    <div className="text-red-400">
-                      Failed to generate tactical order.
+                    <div className="text-red-400 font-mono">
+                      [ERROR] Failed to generate tactical order.
                     </div>
                   )}
                 </div>
@@ -84,7 +88,7 @@ function App() {
           </div>
         </aside>
 
-        {/* Right: The New Live Intel Feed */}
+        {/* Right: The Live Intel Feed */}
         <LiveIntelFeed />
       </main>
     </div>

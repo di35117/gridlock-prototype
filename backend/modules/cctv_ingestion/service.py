@@ -57,7 +57,7 @@ async def process_cctv_payload(raw_payload: dict):
         try:
             # Generate using the NEW google-genai SDK
             response = await client.aio.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-3.5-flash',
                 contents=prompt
             )
             raw_output = response.text.strip()

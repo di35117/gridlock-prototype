@@ -2,7 +2,7 @@
 import React, { useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { Activity, Cpu } from "lucide-react";
-import BengaluruMap from "./components/BengaluruMap";
+import BengaluruMap from "./components/BengalurMap.jsx";
 import LiveIntelFeed from "./components/LiveIntelFeed";
 import TacticalResourceDashboard from "./components/TacticalResourceDashboard";
 import CompoundConflictRadar from "./components/CompoundConflictRadar";

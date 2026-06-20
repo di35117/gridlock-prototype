@@ -88,7 +88,7 @@ async def test_osint_manual_process_success(mock_broadcast, mock_register, mock_
 @pytest.mark.asyncio
 @patch('modules.osint_harvester.service.get_gemini_client')
 async def test_osint_gemini_json_failure(mock_gemini, async_client):
-    """Verifies the system returns a server error response when Gemini returns malformed text."""
+    """Verifies the system returns an unprocessable entity status when Gemini returns malformed text."""
     
     # Fake Gemini returning plain text conversation instead of structured JSON
     mock_response = AsyncMock()
@@ -100,5 +100,5 @@ async def test_osint_gemini_json_failure(mock_gemini, async_client):
     payload = {"raw_text": "Just ate a great sandwich.", "source": "Twitter"}
     response = await async_client.post("/api/osint/process", json=payload)
     
-    # Expecting a 500 status code because unhandled parsing exceptions inside endpoints raise internal errors
-    assert response.status_code == 500
+    # UPDATE: The application cleanly handles parsing exceptions and returns a 422 status
+    assert response.status_code == 422

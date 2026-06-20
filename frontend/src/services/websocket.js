@@ -12,9 +12,15 @@ export const connectSystemWebSocket = () => {
     const data = JSON.parse(event.data);
     const store = useSystemStore.getState();
 
-    // 1. SURGE OR OSINT ALERT DETECTED
-    if (data.type === "TRAFFIC_SURGE" || data.type === "CRITICAL_ALERT") {
-      // If the payload specifies a UI action to snap the map, trigger the loading state
+    // 1. ADD EVERYTHING TO THE LIVE INTEL FEED
+    store.addIntelAlert(data);
+
+    // 2. SURGE OR OSINT ALERT DETECTED -> TRIGGER COPILOT
+    if (
+      data.type === "TRAFFIC_SURGE" ||
+      data.type === "CRITICAL_ALERT" ||
+      data.type === "CCTV_ANOMALY"
+    ) {
       if (
         data.ui_action === "TRIGGER_SIREN_AND_SNAP_MAP" ||
         data.type === "TRAFFIC_SURGE"
@@ -22,7 +28,7 @@ export const connectSystemWebSocket = () => {
         store.triggerSurgeResponse(data.payload || data);
 
         try {
-          // 2. FIRE THE AI COPILOT (Now Async!)
+          // FIRE THE AI COPILOT (Using your Async Polling Pattern!)
           const initialResponse = await fetch(
             "http://localhost:8000/api/copilot/generate",
             {
@@ -41,7 +47,7 @@ export const connectSystemWebSocket = () => {
           const { task_id } = await initialResponse.json();
           if (!task_id) throw new Error("No Task ID received from backend");
 
-          // 3. START THE POLLING LOOP
+          // START THE POLLING LOOP
           const pollInterval = setInterval(async () => {
             try {
               const statusResponse = await fetch(
@@ -50,9 +56,7 @@ export const connectSystemWebSocket = () => {
               const statusData = await statusResponse.json();
 
               if (statusData.status === "completed") {
-                clearInterval(pollInterval); // Stop polling
-
-                // Update the UI with the final Gemini Order
+                clearInterval(pollInterval);
                 store.resolveSurgeResponse(
                   statusData.operational_order,
                   statusData.barricades || [],
@@ -60,22 +64,16 @@ export const connectSystemWebSocket = () => {
                 );
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);
-                console.error(
-                  "Copilot background task failed:",
-                  statusData.error,
-                );
                 store.resolveSurgeResponse(
-                  "Tactical order generation failed due to an internal error.",
+                  "Tactical order generation failed.",
                   [],
                   null,
                 );
               }
-              // If status is "processing", it just ignores and checks again in 2 seconds
             } catch (pollErr) {
-              console.error("Error polling task status:", pollErr);
               clearInterval(pollInterval);
             }
-          }, 2000); // Poll every 2000ms (2 seconds)
+          }, 2000);
         } catch (error) {
           console.error("Automated Copilot execution failed:", error);
           store.resolveSurgeResponse(

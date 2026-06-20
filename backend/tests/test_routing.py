@@ -9,9 +9,8 @@ from modules.routing_engine.service import calculate_tactical_diversion
 async def test_routing_engine_core_logic(mock_get_graph, mock_get_coords):
     # Synthetic Graph Creation
     G = nx.MultiDiGraph()
-    # FIX: OSMnx strictly requires a CRS (Coordinate Reference System) to be set
-    G.graph["crs"] = "epsg:4326" 
-    
+    G.graph["crs"] = "epsg:4326"
+
     G.add_node(1, y=12.90, x=77.50)
     G.add_node(2, y=12.91, x=77.51) # Blocked node
     G.add_node(3, y=12.92, x=77.52)
@@ -32,4 +31,9 @@ async def test_routing_engine_core_logic(mock_get_graph, mock_get_coords):
     assert result["blocked_construction_nodes"] == 1
     coords = result["route_geojson"]["geometry"]["coordinates"]
     assert len(coords) == 2 
-    assert result["barricade_points"][0]["lat"] == 12.91
+    
+    # FIX: Assert the barricades are deployed at the surrounding intersections
+    # (Nodes 1 and 3) to divert traffic, rather than inside the construction zone!
+    barricade_lats = [b["lat"] for b in result["barricade_points"]]
+    assert 12.90 in barricade_lats
+    assert 12.92 in barricade_lats

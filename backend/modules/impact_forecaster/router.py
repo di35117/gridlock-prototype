@@ -63,17 +63,23 @@ async def predict(request: ForecastRequest):
         )
 
     try:
+        # BUG FIX: Parameter Passthrough
+        # Added all missing high-resolution features so the model uses the full context
         result = await service.predict(
             event_cause=request.event_cause,
             corridor=request.corridor,
             hour_of_day=request.hour_of_day,
             day_of_week=request.day_of_week,
             start_datetime=request.start_datetime,
+            police_station=request.police_station,
+            veh_type=request.veh_type,
+            zone=request.zone,
+            latitude=request.latitude,
+            longitude=request.longitude
         )
+        return ForecastResponse(**result)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:
         logger.exception("Prediction failed")
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    return ForecastResponse(**result)
+        raise HTTPException(status_code=500, detail="An error occurred during prediction.")

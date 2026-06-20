@@ -1,6 +1,6 @@
 import React from "react";
 import { Activity, AlertTriangle } from "lucide-react";
-import BengaluruMap from "./components/BengaluruMap";
+import BengaluruMap from "./components/BengalurMap.jsx";
 
 function App() {
   return (

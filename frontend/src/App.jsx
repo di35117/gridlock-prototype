@@ -1,9 +1,10 @@
 // src/App.jsx
 import React, { useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import { Activity, ShieldAlert, Cpu } from "lucide-react";
+import { Activity, Cpu } from "lucide-react";
 import BengaluruMap from "./components/BengaluruMap";
 import LiveIntelFeed from "./components/LiveIntelFeed";
+import TacticalResourceDashboard from "./components/TacticalResourceDashboard";
 import { connectSystemWebSocket } from "./services/websocket";
 import { useSystemStore } from "./store/useSystemStore";
 
@@ -65,25 +66,8 @@ function App() {
               </div>
             ) : (
               <div className="space-y-4 animate-fade-in">
-                {/* Module Summary Panel */}
-                <div className="grid grid-cols-2 gap-2 mb-4">
-                  <div className="bg-gray-700 p-2 rounded border border-gray-600">
-                    <div className="text-[10px] text-gray-400 font-mono">
-                      COMPOUND RISK
-                    </div>
-                    <div className="text-lg font-bold text-orange-400">
-                      High
-                    </div>
-                  </div>
-                  <div className="bg-gray-700 p-2 rounded border border-gray-600">
-                    <div className="text-[10px] text-gray-400 font-mono">
-                      BARRICADES REQ
-                    </div>
-                    <div className="text-lg font-bold text-yellow-400">
-                      4 Points
-                    </div>
-                  </div>
-                </div>
+                {/* NEW RESOURCE DASHBOARD INJECTED HERE */}
+                <TacticalResourceDashboard />
 
                 {/* Gemini Markdown Output */}
                 <div className="prose prose-invert prose-sm max-w-none">

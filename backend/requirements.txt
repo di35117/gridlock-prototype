@@ -22,3 +22,7 @@ python-multipart==0.0.9
 optuna==3.6.1
 google-genai==0.1.0
 websockets==12.0
+pytest==8.2.0
+pytest-asyncio==0.23.7
+testcontainers[postgres]==4.7.0
+locust==2.29.1

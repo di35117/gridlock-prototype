@@ -94,7 +94,7 @@ async def generate_operational_order(
     """
 
     # 3. Call Gemini API asynchronously using the new SDK
-    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using gemini-1.5-flash...")
+    logger.info(f"Generating Copilot order for {event_cause} at {corridor} using gemini-2.5-flash...")
     try:
         response = await client.aio.models.generate_content(
             model='gemini-2.5-flash',

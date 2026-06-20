@@ -22,7 +22,8 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
     """)
     
     # 3. Fetch the historical closure rate for this specific event cause
-    query = text("""
+    # FIXED: Renamed this variable from 'query' to 'query_cause'
+    query_cause = text("""
         SELECT closure_rate, severity_tier
         FROM event_cause_stats
         WHERE event_cause = :event_cause LIMIT 1 
@@ -37,6 +38,7 @@ async def detect_conflict(corridor: str, event_cause: str) -> dict:
         cons_row = cons_res.fetchone()
         construction_count = int(cons_row.count) if cons_row else 0
         
+        # Now this will successfully find the 'query_cause' variable!
         cause_res = await conn.execute(query_cause, {"event_cause": event_cause})
         cause_row = cause_res.fetchone()
         cause_closure_rate = float(cause_row.closure_rate) if cause_row and cause_row.closure_rate else 0.1

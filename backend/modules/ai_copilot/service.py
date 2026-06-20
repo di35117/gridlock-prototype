@@ -97,7 +97,7 @@ async def generate_operational_order(
     logger.info(f"Generating Copilot order for {event_cause} at {corridor} using gemini-1.5-flash...")
     try:
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt
         )
         return response.text

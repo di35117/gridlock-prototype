@@ -24,13 +24,28 @@ export default function BengaluruMap() {
     bearing: 0,
   });
 
-  // Load ML Road Metrics on Startup
+  // Fetch ML Road Metrics and auto-refresh when a surge mutates the DB
   useEffect(() => {
-    fetch("http://localhost:8000/api/network/metrics")
-      .then((res) => res.json())
-      .then((data) => setRoadMetrics(data))
-      .catch((err) => console.error("Failed to load road metrics", err));
-  }, []);
+    const fetchMetrics = () => {
+      // NOTE: Updated URL to match the FastAPI router prefix
+      fetch("http://localhost:8000/api/routing/network/metrics")
+        .then((res) => res.json())
+        .then((data) => setRoadMetrics(data))
+        .catch((err) => console.error("Failed to load road metrics", err));
+    };
+
+    // 1. Initial Map Load
+    fetchMetrics();
+
+    // 2. The Auto-Update Trigger
+    if (activeSurge) {
+      // Small 500ms delay ensures the PostgreSQL transaction has fully committed before we ask for the new map
+      const timer = setTimeout(() => {
+        fetchMetrics();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeSurge, setRoadMetrics]);
 
   // Data-Driven Styling: Colors roads based on the ML 'risk_score' (0.0 to 1.0)
   const roadRiskStyle = {
@@ -104,7 +119,7 @@ export default function BengaluruMap() {
         {barricades.map((coord, idx) => (
           <Marker
             key={`barricade-${idx}`}
-            longitude={coord[0]}
+            longitude={coord[0]} // MapLibre expects [lng, lat] format
             latitude={coord[1]}
           >
             <div className="bg-yellow-500/20 border-2 border-yellow-500 rounded p-1">

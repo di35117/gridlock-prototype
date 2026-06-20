@@ -22,11 +22,15 @@ async def check_for_surge(corridor: str, current_incidents: int) -> dict:
         result = await conn.execute(query, {"corridor": corridor})
         row = result.fetchone()
         
+    # FIX: Graceful Degradation. If the DB is empty or the road is new, 
+    # don't crash. Use a safe default mathematical baseline.
     if not row:
-        raise ValueError(f"Corridor '{corridor}' not found in risk profiles.")
-        
-    mean = float(row.avg_hourly_baseline or 0.0)
-    std = float(row.std_hourly_baseline or 1.0)
+        logger.warning(f"Corridor '{corridor}' not found in DB. Using default baseline.")
+        mean = 5.0
+        std = 2.0
+    else:
+        mean = float(row.avg_hourly_baseline or 0.0)
+        std = float(row.std_hourly_baseline or 1.0)
     
     if std == 0:
         std = 1.0

@@ -1,26 +1,23 @@
-"""
-API routes for the CCTV Ingestion Hub.
-"""
 from fastapi import APIRouter, Request
-from modules.cctv_ingestion.tasks import process_cctv_task
 from modules.cctv_ingestion.models import CCTVResponse
+from modules.cctv_ingestion.tasks import process_cctv_task  # <-- Import the Celery task
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cctv", tags=["CCTV Integration Hub"])
 
 @router.post("/webhook", response_model=CCTVResponse)
-async def cctv_webhook(request: Request):
+async def cctv_webhook(request: Request):  # <-- Removed background_tasks from signature
     """
     Universal Plug-and-Play Webhook for CCTV Vision models.
-    Instantly hands off payloads to the Redis Celery cluster for guaranteed delivery.
+    Accepts valid JSON dictionaries and hands them off to the Celery/Redis queue.
     """
+    # Accept incoming JSON payload
     raw_payload = await request.json()
     
-    logger.info("Incoming CCTV vision payload detected. Enqueuing to Redis cluster...")
+    logger.info("Incoming CCTV vision payload detected. Routing to Celery queue...")
     
-    # FIXES BOTTLENECK C: Instant offload to persistent memory (Redis)
-    # This takes 0.001 seconds, freeing FastAPI to accept thousands of other requests.
+    # Dispatch to the distributed Celery worker queue instantly
     process_cctv_task.delay(raw_payload)
     
     return CCTVResponse(

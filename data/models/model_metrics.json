@@ -7,10 +7,10 @@
         "applied_threshold": 0.5
     },
     "closure": {
-        "accuracy": 0.8586,
-        "auc": 0.7868,
-        "recall": 0.5714,
-        "applied_threshold": 0.1208
+        "accuracy": 0.8201,
+        "auc": 0.782,
+        "recall": 0.6303,
+        "applied_threshold": 0.1436
     },
     "feature_cols": [
         "event_cause_enc",

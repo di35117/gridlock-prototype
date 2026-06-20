@@ -13,3 +13,7 @@ class RoutingResponse(BaseModel):
     route_geojson: Dict[str, Any] = Field(..., description="GeoJSON LineString for the React map to draw")
     barricade_points: List[Dict[str, float]] = Field(..., description="List of exact lat/lon for barricade placement")
     blocked_construction_nodes: int = Field(..., description="How many construction zones were avoided")
+
+class NetworkMetricsResponse(BaseModel):
+    type: str = "FeatureCollection"
+    features: List[Dict[str, Any]] = Field(..., description="List of road segments with embedded ML risk scores")

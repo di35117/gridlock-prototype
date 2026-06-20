@@ -25,3 +25,14 @@ class BTPTrafficSimulator(HttpUser):
             "current_hourly_incidents": random.randint(5, 25)
         }
         self.client.post("/api/surge/check", json=payload)
+    @task(2) # Runs fairly frequently
+    def simulate_compound_conflict_ping(self):
+        corridors = ["Mysore Road", "ORR East", "Silk Board", "Hebbal Flyover"]
+        causes = ["protest", "vehicle_breakdown", "accident", "construction"]
+        
+        payload = {
+            "corridor": random.choice(corridors),
+            "event_cause": random.choice(causes)
+        }
+        # Hammers the new compound conflict endpoint
+        self.client.post("/api/conflict/detect", json=payload)

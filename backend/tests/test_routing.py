@@ -151,6 +151,6 @@ async def test_routing_engine_core_logic(mock_shortest_path, mock_nearest_nodes,
         d_lat=12.92, d_lon=77.52
     )
     
-    assert result["status"] == "Diversion Generated Successfully"
+    assert result["status"] == "Optimal Diversion Found"
     assert result["blocked_construction_nodes"] == 1
     assert result["route_geojson"]["type"] == "LineString"

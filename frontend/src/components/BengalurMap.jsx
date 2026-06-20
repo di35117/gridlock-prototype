@@ -1,5 +1,4 @@
-// src/components/BengaluruMap.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import Map, {
   Source,
   Layer,
@@ -13,14 +12,23 @@ import "maplibre-gl/dist/maplibre-gl.css";
 const MAPTILER_TOKEN = import.meta.env.VITE_MAPTILER_TOKEN;
 
 export default function BengaluruMap() {
-  const { roadMetrics, activeSurge, barricades, diversions, setRoadMetrics } =
-    useSystemStore();
+  const {
+    roadMetrics,
+    activeSurge,
+    barricades,
+    diversions,
+    setRoadMetrics,
+    isProcessing,
+  } = useSystemStore();
   const [isMapLoading, setIsMapLoading] = useState(true);
+
+  // --- NEW: Camera Reference ---
+  const mapRef = useRef(null);
 
   const [viewState, setViewState] = useState({
     longitude: 77.5946,
     latitude: 12.9716,
-    zoom: 11.5, // Slightly zoomed in for a better initial view
+    zoom: 12.5,
     pitch: 45,
     bearing: 0,
   });
@@ -40,82 +48,152 @@ export default function BengaluruMap() {
         setIsMapLoading(false);
       }
     };
+    if (!roadMetrics) fetchMetrics();
+  }, [roadMetrics, setRoadMetrics]);
 
-    fetchMetrics();
-
-    if (activeSurge) {
-      const timer = setTimeout(() => {
-        fetchMetrics();
-      }, 500);
-      return () => clearTimeout(timer);
+  // --- NEW: The Cinematic Camera Sequence ---
+  useEffect(() => {
+    if (activeSurge && mapRef.current) {
+      mapRef.current.flyTo({
+        center: [activeSurge.longitude, activeSurge.latitude],
+        zoom: 16, // Extreme street-level zoom
+        pitch: 65, // Aggressive 3D tilt
+        bearing: 25, // Slight rotation for visual depth
+        duration: 2500, // 2.5 second cinematic sweep
+        essential: true,
+      });
     }
-  }, [activeSurge, setRoadMetrics]);
+  }, [activeSurge]);
 
-  // 1. Sleeker, Tactical Data-Driven Styling
-  const roadRiskStyle = {
-    id: "road-risk-layer",
-    type: "line",
-    paint: {
-      // Scale smoothly: incredibly thin at high altitudes, thicker at street level
-      "line-width": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        10,
-        0.5, // Very thin when zoomed out
-        13,
-        2, // Medium at neighborhood level
-        16,
-        5, // Thick at street level
-      ],
-      // Drop the opacity slightly so overlapping roads blend instead of clash
-      "line-opacity": 0.75,
-      // Slightly muted, tactical colors instead of pure neon
-      "line-color": [
-        "interpolate",
-        ["linear"],
-        ["get", "risk_score"],
-        0.0,
-        "#22c55e", // Green
-        0.5,
-        "#fbbf24", // Muted Amber
-        0.8,
-        "#f97316", // Orange
-        1.0,
-        "#dc2626", // Deep Red
-      ],
-    },
-  };
+  // --- NEW: React Memoization (Prevents 15-Second UI Freezes) ---
+  const roadGlowStyle = useMemo(
+    () => ({
+      id: "road-glow-layer",
+      type: "line",
+      paint: {
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 12],
+        "line-blur": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 10],
+        "line-opacity": 0.4,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "risk_score"],
+          0.0,
+          "#22c55e",
+          0.5,
+          "#eab308",
+          0.8,
+          "#f97316",
+          1.0,
+          "#ef4444",
+        ],
+      },
+    }),
+    [],
+  );
+
+  const roadRiskStyle = useMemo(
+    () => ({
+      id: "road-risk-layer",
+      type: "line",
+      paint: {
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 15, 4],
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "risk_score"],
+          0.0,
+          "#22c55e",
+          0.5,
+          "#eab308",
+          0.8,
+          "#f97316",
+          1.0,
+          "#ef4444",
+        ],
+      },
+    }),
+    [],
+  );
+
+  const roadLabelStyle = useMemo(
+    () => ({
+      id: "road-labels",
+      type: "symbol",
+      minzoom: 13,
+      layout: {
+        "symbol-placement": "line",
+        "text-field": [
+          "step",
+          ["get", "risk_score"],
+          "{name}",
+          0.1,
+          "{name} | RISK: {risk_score}",
+        ],
+        "text-size": 11,
+        "text-letter-spacing": 0.1,
+        "text-anchor": "center",
+        "text-offset": [0, -1],
+      },
+      paint: {
+        "text-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "risk_score"],
+          0.0,
+          "#9ca3af",
+          0.5,
+          "#fde047",
+          0.8,
+          "#fdba74",
+          1.0,
+          "#fca5a5",
+        ],
+        "text-halo-color": "#111827",
+        "text-halo-width": 2,
+      },
+    }),
+    [],
+  );
+
+  const diversionStyle = useMemo(
+    () => ({
+      id: "ai-route",
+      type: "line",
+      paint: {
+        "line-color": "#3b82f6",
+        "line-width": 5,
+        "line-dasharray": [2, 2],
+        "line-opacity": isProcessing ? 0.4 : 1.0,
+      },
+    }),
+    [isProcessing],
+  );
 
   if (!MAPTILER_TOKEN)
     return (
-      <div className="text-white p-4 font-mono text-sm">
-        Missing MapTiler Token
-      </div>
+      <div className="text-white p-4 font-mono">Missing MapTiler Token</div>
     );
 
   return (
     <div className="w-full h-full relative bg-gray-950">
-      {/* 2. Loading State Overlay for UX */}
       {isMapLoading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-950/80 backdrop-blur-sm">
           <div className="flex flex-col items-center p-6 bg-gray-900 rounded-lg border border-gray-800 shadow-2xl">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-3" />
             <h3 className="text-gray-300 font-mono text-sm tracking-widest font-bold">
-              INGESTING ML ROAD METRICS
+              DECOMPRESSING NETWORK GRAPH
             </h3>
-            <p className="text-gray-500 text-xs font-mono mt-1">
-              Parsing GeoJSON payload...
-            </p>
           </div>
         </div>
       )}
 
       <Map
+        ref={mapRef}
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
         mapStyle={`https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_TOKEN}`}
-        interactiveLayerIds={["road-risk-layer"]} // Improves performance
       >
         <NavigationControl position="bottom-right" />
 
@@ -126,22 +204,15 @@ export default function BengaluruMap() {
             data={roadMetrics}
             generateId={true}
           >
+            <Layer {...roadGlowStyle} />
             <Layer {...roadRiskStyle} />
+            <Layer {...roadLabelStyle} />
           </Source>
         )}
 
         {diversions && (
           <Source id="ai-diversions" type="geojson" data={diversions}>
-            <Layer
-              id="diversion-lines"
-              type="line"
-              paint={{
-                "line-color": "#3b82f6", // Bright blue for active AI routing
-                "line-width": 4,
-                "line-dasharray": [2, 2],
-                "line-opacity": 0.9,
-              }}
-            />
+            <Layer {...diversionStyle} />
           </Source>
         )}
 
@@ -150,8 +221,11 @@ export default function BengaluruMap() {
             longitude={activeSurge.longitude}
             latitude={activeSurge.latitude}
           >
-            <div className="animate-pulse bg-red-600/30 p-3 rounded-full border border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]">
-              <AlertTriangle className="text-red-500" size={24} />
+            <div className="relative flex items-center justify-center">
+              <div className="absolute w-12 h-12 bg-red-600/30 rounded-full animate-ping"></div>
+              <div className="bg-red-900 border border-red-500 p-2 rounded-full shadow-[0_0_20px_rgba(239,68,68,0.8)] z-10">
+                <AlertTriangle className="text-red-400" size={24} />
+              </div>
             </div>
           </Marker>
         )}

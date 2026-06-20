@@ -3,14 +3,9 @@ from unittest.mock import patch, AsyncMock
 from modules.cctv_ingestion.service import process_cctv_payload
 
 @pytest.mark.asyncio
-@patch('modules.cctv_ingestion.service.predict')
-@patch('modules.cctv_ingestion.service.register_active_event')
-@patch('modules.cctv_ingestion.service.notifier.broadcast_alert')
-async def test_cctv_webhook_perfect_payload(mock_broadcast, mock_register, mock_predict, async_client):
-    """Verifies that the web tier successfully schedules standard payloads."""
-    mock_predict.return_value = {"compound_risk_score": 0.14, "risk_level": "Low", "closure_probability": 0.05}
-    mock_register.return_value = None
-    
+@patch('modules.cctv_ingestion.tasks.process_cctv_task.delay') # <-- Mocks the Celery Queue
+async def test_cctv_webhook_queues_payload(mock_celery_delay, async_client):
+    """Verifies the HTTP router successfully hands off data to the Celery broker."""
     payload = {
         "corridor": "Mysore Road",
         "event_cause": "vehicle_breakdown",
@@ -18,9 +13,15 @@ async def test_cctv_webhook_perfect_payload(mock_broadcast, mock_register, mock_
         "longitude": 77.5946,
         "veh_type": "heavy_vehicle"
     }
+    
     response = await async_client.post("/api/cctv/webhook", json=payload)
+    
+    # Assert HTTP success
     assert response.status_code == 200
     assert response.json()["status"] == "Accepted"
+    
+    # Assert Celery was called with the exact payload
+    mock_celery_delay.assert_called_once_with(payload)
 
 
 @pytest.mark.asyncio
@@ -30,7 +31,7 @@ async def test_cctv_webhook_perfect_payload(mock_broadcast, mock_register, mock_
 @patch('modules.cctv_ingestion.service.get_gemini_client')
 async def test_cctv_service_ai_translation_path(mock_gemini, mock_broadcast, mock_register, mock_predict):
     """
-    Directly tests the background processing logic for non-standard schemas.
+    Directly tests the backend worker logic for non-standard schemas.
     Ensures that Gemini normalizes data and downstream tracking triggers execute.
     """
     # 1. Setup downstream predictions
@@ -60,14 +61,14 @@ async def test_cctv_service_ai_translation_path(mock_gemini, mock_broadcast, moc
         "lng": 77.6244
     }
 
-    # Invoke the service directly to bypass the fire-and-forget HTTP background wrapper
+    # Invoke the service directly (how the Celery worker will actually execute it)
     await process_cctv_payload(proprietary_payload)
 
     # 4. Asserts: Verify translation logic mapped everything flawlessly
     mock_gemini.assert_called_once()
     mock_predict.assert_called_once_with(
-        event_cause="accident", # Mapped by AI
-        corridor="Outer Ring Road", # Mapped by AI
+        event_cause="accident", 
+        corridor="Outer Ring Road", 
         hour_of_day=pytest.any(int),
         day_of_week=pytest.any(int),
         latitude=12.9176,
@@ -83,10 +84,11 @@ async def test_cctv_service_ai_translation_path(mock_gemini, mock_broadcast, moc
 @pytest.mark.asyncio
 @patch('modules.cctv_ingestion.service.get_gemini_client')
 async def test_cctv_service_rejects_malformed_types(mock_gemini):
-    """Ensures background processing safely exits without processing arrays or strings."""
+    """Ensures worker processing safely exits without crashing on arrays or strings."""
     bad_payload = [{"cam_id": 1, "status": "malfunctioning"}]
     
     # If the guard clause fails, it will look for keys and crash or call Gemini
     await process_cctv_payload(bad_payload)
     
+    # Ensure no API calls were wasted
     mock_gemini.assert_not_called()

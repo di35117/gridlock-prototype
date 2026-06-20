@@ -61,6 +61,7 @@ export const connectSystemWebSocket = () => {
                   statusData.operational_order,
                   statusData.barricades || [],
                   statusData.diversion_routes || null,
+                  statusData.resources || null,
                 );
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);

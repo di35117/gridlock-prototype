@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, ANY
 from modules.cctv_ingestion.service import process_cctv_payload
 
 @pytest.mark.asyncio
@@ -69,8 +69,8 @@ async def test_cctv_service_ai_translation_path(mock_gemini, mock_broadcast, moc
     mock_predict.assert_called_once_with(
         event_cause="accident", 
         corridor="Outer Ring Road", 
-        hour_of_day=pytest.any(int),
-        day_of_week=pytest.any(int),
+        hour_of_day=ANY,
+        day_of_week=ANY,
         latitude=12.9176,
         longitude=77.6244,
         veh_type="car"

@@ -11,4 +11,4 @@ class SurgeResponse(BaseModel):
     current_incidents: int
     z_score: float
     is_surge_detected: bool
-    automated_action: str | None
+    automated_action: str | None = None

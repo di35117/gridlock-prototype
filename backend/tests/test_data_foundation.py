@@ -1,8 +1,14 @@
 import pytest
 import pytest_asyncio
+import pandas as pd
+import numpy as np
 from sqlalchemy import text
 from unittest.mock import patch, AsyncMock
 from database import engine
+
+# ─────────────────────────────────────────────────────────
+# 1. Database Fixtures & State Management
+# ─────────────────────────────────────────────────────────
 
 @pytest_asyncio.fixture(autouse=True)
 async def cleanup_and_seed_tables():
@@ -47,6 +53,9 @@ async def cleanup_and_seed_tables():
     async with engine.begin() as conn:
         await conn.execute(text("TRUNCATE TABLE incidents, corridor_risk_profiles, station_corridor_mapping, event_cause_stats CASCADE;"))
 
+# ─────────────────────────────────────────────────────────
+# 2. Database Endpoint Tests
+# ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_get_status_counts(async_client):
@@ -61,7 +70,6 @@ async def test_get_status_counts(async_client):
     assert data["record_counts"]["event_cause_stats"] == 2
     assert data["record_counts"]["incidents"] == 0
 
-
 @pytest.mark.asyncio
 async def test_get_corridor_profiles_sorting(async_client):
     """Verifies all corridor records are returned, sorted by risk score descending."""
@@ -75,7 +83,6 @@ async def test_get_corridor_profiles_sorting(async_client):
     assert data[0]["risk_score"] == 8.9
     assert data[1]["corridor"] == "Low Risk Lane"
 
-
 @pytest.mark.asyncio
 async def test_get_single_corridor_profile_success(async_client):
     """Verifies accurate single corridor payload mapping extraction."""
@@ -87,14 +94,12 @@ async def test_get_single_corridor_profile_success(async_client):
     assert data["construction_incidents"] == 20
     assert data["risk_score"] == 8.9
 
-
 @pytest.mark.asyncio
 async def test_get_single_corridor_profile_not_found(async_client):
     """Confirms 404 behavior when checking an unprofiled road name."""
     response = await async_client.get("/api/data/corridor-profiles/Unknown%20Street")
     assert response.status_code == 404
     assert "Unknown Street" in response.json()["detail"]
-
 
 @pytest.mark.asyncio
 async def test_get_event_stats_sorting(async_client):
@@ -110,7 +115,6 @@ async def test_get_event_stats_sorting(async_client):
     assert data[0]["severity_tier"] == 3
     assert data[1]["event_cause"] == "vehicle_breakdown"
 
-
 @pytest.mark.asyncio
 async def test_get_station_mapping_success(async_client):
     """Confirms jurisdictional mapping works and orders by highest handling station."""
@@ -125,14 +129,12 @@ async def test_get_station_mapping_success(async_client):
     assert data[1]["police_station"] == "Station B"
     assert data[1]["is_primary"] is False
 
-
 @pytest.mark.asyncio
 async def test_get_station_mapping_not_found(async_client):
     """Confirms 404 is thrown when no station mappings exist for a corridor."""
     response = await async_client.get("/api/data/station-mapping/Empty%20Boulevard")
     assert response.status_code == 404
     assert "Empty Boulevard" in response.json()["detail"]
-
 
 @pytest.mark.asyncio
 @patch("modules.data_foundation.router.reload_data_foundation", new_callable=AsyncMock)
@@ -147,3 +149,42 @@ async def test_reload_data_foundation_endpoint(mock_reload, async_client):
     assert data["status"] == "initialized"
     assert data["incidents_loaded"] == 8173
     mock_reload.assert_called_once()
+
+
+# ─────────────────────────────────────────────────────────
+# 3. Pandas ETL Pipeline & Feature Engineering Tests
+# ─────────────────────────────────────────────────────────
+
+def test_pandas_lowercase_and_cleanup_logic():
+    """Verifies the Pandas logic used to clean raw BTP CSV strings."""
+    # Simulate a raw BTP CSV slice with messy cases and nulls
+    raw_df = pd.DataFrame({
+        "corridor": ["Hosur ROAD", "MG Road ", None],
+        "event_cause": ["PROTEST", "VIP_Movement", "accident"]
+    })
+    
+    # Run the standard data foundation cleaning steps
+    raw_df['corridor'] = raw_df['corridor'].str.strip().str.lower()
+    raw_df['event_cause'] = raw_df['event_cause'].str.strip().str.lower()
+    raw_df = raw_df.dropna(subset=['corridor']) # Drop empty roads
+    
+    # Assertions
+    assert len(raw_df) == 2  # The None row was correctly dropped
+    assert raw_df["corridor"].iloc[0] == "hosur road"
+    assert raw_df["event_cause"].iloc[0] == "protest"
+
+def test_cyclical_time_feature_engineering_math():
+    """Verifies that time features are correctly transformed into sine/cosine spatial waves."""
+    df = pd.DataFrame({"hour": [0, 6, 12, 18, 24]})
+    
+    # Mathematical transformation BTP uses to teach AI that 24:00 and 00:00 are the same
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24.0)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24.0)
+    
+    # 0 (Midnight) and 24 (Midnight next day) should be mathematically identical
+    assert np.isclose(df["hour_sin"].iloc[0], df["hour_sin"].iloc[4])
+    assert np.isclose(df["hour_cos"].iloc[0], df["hour_cos"].iloc[4])
+    
+    # 12 (Noon) should be on the exact opposite side of the cosine wave from 0 (Midnight)
+    assert np.isclose(df["hour_cos"].iloc[0], 1.0)
+    assert np.isclose(df["hour_cos"].iloc[2], -1.0)

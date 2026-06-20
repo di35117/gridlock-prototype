@@ -185,6 +185,20 @@ async def predict(
     )
     risk_level = _classify_risk_level(compound_score)
 
+    # ── UPSERT: Mutate the Live Graph State ─────────────────────────────
+    upsert_query = text("""
+        INSERT INTO corridor_risk_profiles (corridor, risk_score, updated_at)
+        VALUES (:corridor, :risk_score, NOW())
+        ON CONFLICT (corridor) 
+        DO UPDATE SET risk_score = EXCLUDED.risk_score, updated_at = NOW();
+    """)
+    async with engine.begin() as conn:
+        await conn.execute(upsert_query, {
+            "corridor": corridor,
+            "risk_score": compound_score
+        })
+    logger.info(f"Graph Mutated: Live risk score for '{corridor}' updated to {compound_score:.4f}")
+
     return {
         "event_cause": event_cause,
         "corridor": corridor,

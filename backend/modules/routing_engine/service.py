@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import networkx as nx
 import osmnx as ox
 from sqlalchemy import text
@@ -38,18 +39,14 @@ async def _get_construction_coordinates(corridor: str) -> list[tuple[float, floa
         
     return [(float(row.latitude), float(row.longitude)) for row in rows]
 
-async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
-    logger.info(f"Calculating tactical diversion for {corridor}...")
-    
-    # 1. Load the graph
-    G = _get_graph()
+def _run_heavy_graph_math(G, corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float, construction_coords: list) -> dict:
+    """Synchronous function to handle all CPU-bound NetworkX and OSMnx operations."""
     
     # 2. Get origin and destination nodes nearest to the provided coordinates
     orig_node = ox.distance.nearest_nodes(G, X=o_lon, Y=o_lat)
     dest_node = ox.distance.nearest_nodes(G, X=d_lon, Y=d_lat)
     
-    # 3. Fetch construction zones and find their nearest graph nodes
-    construction_coords = await _get_construction_coordinates(corridor)
+    # 3. Find nearest graph nodes for construction zones
     blocked_nodes = []
     if construction_coords:
         lons = [c[1] for c in construction_coords]
@@ -68,8 +65,8 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     try:
         route = nx.shortest_path(G_safe, orig_node, dest_node, weight='length')
         status = "Optimal Diversion Found"
-    except (nx.NetworkXNoPath, nx.NodeNotFound):  # FIX: Catch NodeNotFound as well
-        logger.warning("No safe path exists avoiding all construction (or origin/destination itself was blocked). Falling back to shortest path through construction.")
+    except (nx.NetworkXNoPath, nx.NodeNotFound): 
+        logger.warning("No safe path exists avoiding all construction. Falling back to shortest path.")
         route = nx.shortest_path(G, orig_node, dest_node, weight='length')
         status = "Warning: Forced Path (Construction Unavoidable)"
 
@@ -89,10 +86,9 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     
     # 7. Identify Barricade Points (Nodes immediately preceding the blocked zones)
     barricade_points = []
-    blocked_set = set(blocked_nodes)  # FIX: Precompute set for O(1) lookups
+    blocked_set = set(blocked_nodes)
     
     for blocked in blocked_nodes:
-        # FIX: Use all_neighbors to catch upstream intersections on directed graphs
         for neighbor in nx.all_neighbors(G, blocked):
             if neighbor not in blocked_set:
                 barricade_points.append({
@@ -109,3 +105,19 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
         "barricade_points": unique_barricades[:15], 
         "blocked_construction_nodes": len(blocked_nodes)
     }
+
+async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
+    logger.info(f"Calculating tactical diversion for {corridor}...")
+    
+    # 1. Load the graph using to_thread (protects server from freezing if it's the very first request loading the 50MB file)
+    G = await asyncio.to_thread(_get_graph)
+    
+    # Fetch construction zones from the DB (this is standard async I/O, does not block)
+    construction_coords = await _get_construction_coordinates(corridor)
+    
+    # Offload all heavy pathfinding math to the background thread pool
+    result = await asyncio.to_thread(
+        _run_heavy_graph_math, G, corridor, o_lat, o_lon, d_lat, d_lon, construction_coords
+    )
+
+    return result

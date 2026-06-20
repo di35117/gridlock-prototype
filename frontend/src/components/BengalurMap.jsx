@@ -15,7 +15,7 @@ export default function BengaluruMap() {
   });
 
   // Use a highly optimized vector dark mode style from MapTiler
-  const mapStyleUrl = `https://api.maptiler.com/maps/toner-v2-dark/style.json?key=${MAPTILER_TOKEN}`;
+  const mapStyleUrl = `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${MAPTILER_TOKEN}`;
 
   if (!MAPTILER_TOKEN) {
     return (

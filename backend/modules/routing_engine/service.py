@@ -96,7 +96,6 @@ def _run_heavy_graph_math(G, corridor: str, o_lat: float, o_lon: float, d_lat: f
                     "lon": G.nodes[neighbor]['x']
                 })
                 
-    # De-duplicate barricades based on coordinate pairs
     unique_barricades = list({(b["lat"], b["lon"]): b for b in barricade_points}.values())
 
     return {
@@ -108,16 +107,66 @@ def _run_heavy_graph_math(G, corridor: str, o_lat: float, o_lon: float, d_lat: f
 
 async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
     logger.info(f"Calculating tactical diversion for {corridor}...")
-    
-    # 1. Load the graph using to_thread (protects server from freezing if it's the very first request loading the 50MB file)
     G = await asyncio.to_thread(_get_graph)
-    
-    # Fetch construction zones from the DB (this is standard async I/O, does not block)
     construction_coords = await _get_construction_coordinates(corridor)
-    
-    # Offload all heavy pathfinding math to the background thread pool
     result = await asyncio.to_thread(
         _run_heavy_graph_math, G, corridor, o_lat, o_lon, d_lat, d_lon, construction_coords
     )
-
     return result
+
+async def generate_network_metrics_geojson() -> dict:
+    """
+    Converts the OSMNX Graph into a GeoJSON FeatureCollection.
+    Merges real-time ML risk scores from the database into the road properties.
+    """
+    logger.info("Generating network metrics GeoJSON...")
+    
+    # 1. Load the graph safely in a background thread if it's the first time
+    G = await asyncio.to_thread(_get_graph)
+    
+    # 2. Fetch the real-time ML risk scores from the database
+    query = text("SELECT corridor, risk_score FROM corridor_risk_profiles")
+    corridor_risks = {}
+    async with engine.connect() as conn:
+        result = await conn.execute(query)
+        for row in result.fetchall():
+            if row.corridor:
+                normalized_name = str(row.corridor).strip().lower()
+                corridor_risks[normalized_name] = float(row.risk_score or 0.0)
+
+    # 3. Offload the heavy loop to the background thread to prevent blocking
+    def _build_features(graph, risks):
+        features = []
+        for u, v, data in graph.edges(data=True):
+            if 'geometry' in data:
+                coords = list(data['geometry'].coords)
+            else:
+                coords = [(graph.nodes[u]['x'], graph.nodes[u]['y']),
+                          (graph.nodes[v]['x'], graph.nodes[v]['y'])]
+                
+            name = data.get('name', 'Unknown')
+            if isinstance(name, list):
+                name = name[0]
+                
+            normalized_name = str(name).strip().lower()
+            risk_score = risks.get(normalized_name, 0.0)
+            
+            highway_type = data.get('highway', '')
+            if isinstance(highway_type, list):
+                highway_type = highway_type[0]
+                
+            if highway_type in ['primary', 'secondary', 'trunk', 'motorway', 'primary_link', 'secondary_link']:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": coords},
+                    "properties": {"name": name, "highway": highway_type, "risk_score": risk_score}
+                })
+        return features
+
+    features = await asyncio.to_thread(_build_features, G, corridor_risks)
+    logger.info(f"Generated {len(features)} road segments for MapLibre rendering.")
+    
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }

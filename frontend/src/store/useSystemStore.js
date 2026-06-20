@@ -3,22 +3,27 @@ import { create } from "zustand";
 
 export const useSystemStore = create((set) => ({
   // Map Data
-  roadMetrics: null, // GeoJSON holding ML predictions for every road
+  roadMetrics: null,
 
-  // Incident Data
+  // Event Inbox (Solves the multiple-surge problem)
+  intelFeed: [], // Stores every incoming WS alert
+
+  // Currently Focused Incident Data
   activeSurge: null,
-
-  // AI Copilot & Routing Data
   copilotOrder: null,
-  barricades: [], // Array of [lng, lat]
-  diversions: null, // GeoJSON LineStrings for routing
-
-  // System Status
+  barricades: [],
+  diversions: null,
   isProcessing: false,
 
   setRoadMetrics: (data) => set({ roadMetrics: data }),
 
-  // The trigger that resets the board when a new surge hits
+  // Adds an alert to the top of the feed (keeps the last 50)
+  addIntelAlert: (alert) =>
+    set((state) => ({
+      intelFeed: [alert, ...state.intelFeed].slice(0, 50),
+    })),
+
+  // The trigger that resets the board when a new surge hits (or when clicked from the feed)
   triggerSurgeResponse: (surgeData) =>
     set({
       activeSurge: surgeData,

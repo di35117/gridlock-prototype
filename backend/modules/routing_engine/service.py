@@ -1,19 +1,28 @@
 import logging
 import networkx as nx
+import osmnx as ox
 from typing import Dict, Any
 from sqlalchemy import text
 from database import AsyncSessionLocal
 from config import BENGALURU_GRAPH_CACHE
-from modules.routing_engine.utils import load_cached_graph
 
 logger = logging.getLogger(__name__)
 
-# --- NEW: Global Memory Cache ---
+# --- IN-MEMORY CACHES (Sub-second Response Times) ---
 _GEOJSON_CACHE = None
+_MEM_GRAPH = None
 
 async def _get_graph() -> nx.MultiDiGraph:
-    """Loads the OSMnx graph from cache."""
-    return load_cached_graph(BENGALURU_GRAPH_CACHE)
+    """Loads the OSMnx graph from disk into RAM only once."""
+    global _MEM_GRAPH
+    if _MEM_GRAPH is None:
+        logger.info(f"Loading GraphML into Memory from: {BENGALURU_GRAPH_CACHE}")
+        try:
+            _MEM_GRAPH = ox.load_graphml(BENGALURU_GRAPH_CACHE)
+        except Exception as e:
+            logger.error(f"OSMnx load failed, falling back to pure NetworkX: {e}")
+            _MEM_GRAPH = nx.read_graphml(BENGALURU_GRAPH_CACHE)
+    return _MEM_GRAPH
 
 async def _get_corridor_risks() -> Dict[str, float]:
     """Fetches real-time AI risk scores for all known corridors."""
@@ -29,32 +38,21 @@ async def _get_corridor_risks() -> Dict[str, float]:
     return risks
 
 async def generate_network_metrics_geojson() -> dict:
-    """
-    Calculates betweenness centrality and assigns ML risk scores
-    to every road segment to render the UI map.
-    """
     global _GEOJSON_CACHE
     
-    # --- NEW: Zero-Latency Cache Return ---
     if _GEOJSON_CACHE is not None:
-        logger.info("Serving MapLibre GeoJSON from memory cache (Zero-Latency).")
         return {"type": "FeatureCollection", "features": _GEOJSON_CACHE}
 
-    # 1. Load Graph and Profile data
     G = await _get_graph()
     risks = await _get_corridor_risks()
-
-    # 2. Extract edges to format into GeoJSON lines
     features = []
     
-    # 3. Only calculate on main arterial roads to prevent WebGL crashing
     allowed_highways = ['primary', 'secondary', 'trunk', 'motorway', 'primary_link', 'secondary_link']
 
     for u, v, key, data in G.edges(keys=True, data=True):
         if 'geometry' in data:
             highway_type = data.get('highway', '')
             
-            # Unpack list if highway_type is a list
             if isinstance(highway_type, list):
                 if not any(h in allowed_highways for h in highway_type):
                     continue
@@ -69,14 +67,13 @@ async def generate_network_metrics_geojson() -> dict:
             normalized_name = str(name).strip().lower()
             risk_score = risks.get(normalized_name, 0.0)
             
-            # --- START HACKATHON DEMO OVERRIDE ---
+            # --- HACKATHON DEMO OVERRIDES ---
             if "mysore" in normalized_name or "mysuru" in normalized_name:
-                risk_score = max(risk_score, 0.95)  # Critical Red
+                risk_score = max(risk_score, 0.95)
             elif "outer ring road" in normalized_name or "orr" in normalized_name:
-                risk_score = max(risk_score, 0.75)  # Orange
+                risk_score = max(risk_score, 0.75)
             elif "silk board" in normalized_name:
-                risk_score = max(risk_score, 0.60)  # Yellow
-            # --- END HACKATHON DEMO OVERRIDE ---
+                risk_score = max(risk_score, 0.60)
 
             coords = list(data['geometry'].coords)
             
@@ -101,19 +98,15 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
     G = await _get_graph()
     
     try:
-        # Find nearest nodes to Origin and Destination
-        import osmnx as ox
         orig_node = ox.distance.nearest_nodes(G, X=o_lon, Y=o_lat)
         dest_node = ox.distance.nearest_nodes(G, X=d_lon, Y=d_lat)
 
-        # Get list of nodes experiencing construction
         construction_coords = await _get_construction_coordinates(corridor)
         blocked_nodes = set()
         for lat, lon in construction_coords:
             node = ox.distance.nearest_nodes(G, X=lon, Y=lat)
             blocked_nodes.add(node)
 
-        # Tactical Edge Removal (Sever the blocked nodes from the graph)
         G_tactical = G.copy()
         edges_to_remove = []
         for u, v, k in G_tactical.edges(keys=True):
@@ -122,10 +115,8 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
         
         G_tactical.remove_edges_from(edges_to_remove)
 
-        # Calculate Shortest Path on the mutilated graph (forces a diversion)
         route_nodes = nx.shortest_path(G_tactical, orig_node, dest_node, weight='length')
         
-        # Build the GeoJSON Route and Barricade placements
         route_coords = []
         barricade_points = []
         
@@ -133,12 +124,10 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
             node_data = G_tactical.nodes[node_id]
             route_coords.append((node_data['x'], node_data['y']))
             
-            # If a node connects to a blocked node, that is where we drop a barricade
             original_neighbors = list(G.neighbors(node_id))
             tactical_neighbors = list(G_tactical.neighbors(node_id))
             
             if len(original_neighbors) > len(tactical_neighbors):
-                # A path was severed here. Drop a barricade.
                 barricade_points.append({"lat": node_data['y'], "lon": node_data['x']})
 
         route_geojson = {

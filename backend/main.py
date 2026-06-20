@@ -6,6 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware # NEW: GZip Optimization
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -21,7 +22,7 @@ from database import init_db
 from modules.data_foundation import service as data_foundation_service
 from modules.data_foundation.router import router as data_foundation_router
 from modules.impact_forecaster import trainer as forecaster_trainer
-from modules.impact_forecaster import service as forecaster_service  # NEW IMPORT
+from modules.impact_forecaster import service as forecaster_service
 from modules.impact_forecaster.router import router as impact_forecaster_router
 from modules.compound_conflict.router import router as compound_conflict_router
 from modules.ai_copilot.router import router as ai_copilot_router
@@ -50,18 +51,17 @@ async def lifespan(app: FastAPI):
         logger.info("No trained forecaster models found — training now …")
         metrics = await forecaster_trainer.train_and_save()
         
-        # FIX: Load models into memory immediately to prevent cold-start crashes
+        # Load models into memory immediately to prevent cold-start crashes
         forecaster_service.reload_models()
-        
         logger.info(f"Impact Forecaster trained: {metrics}")
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
         
-    # Start Autonomous Monitoring Daemons
-    scheduler.add_job(run_autonomous_surge_scan, 'interval', minutes=5)
-    scheduler.add_job(autonomous_event_learning_scan, 'interval', minutes=5)
+    # --- DEMO OPTIMIZATION: Faster Daemons for Live Presentation ---
+    scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15) # Sped up for demo
+    scheduler.add_job(autonomous_event_learning_scan, 'interval', seconds=15) # Sped up for demo
     scheduler.start()
-    logger.info("Autonomous Monitoring Daemon (APScheduler) started.")
+    logger.info("Autonomous Monitoring Daemons (APScheduler) started (15s intervals).")
         
     logger.info("━━━ Startup complete — ready to serve ━━━")
     yield
@@ -70,6 +70,9 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 app = FastAPI(title="BTP Event Intelligence Platform", lifespan=lifespan)
+
+# --- NEW: Global GZip Compression (Fixes Map Load Times) ---
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS opened for seamless frontend integration
 app.add_middleware(

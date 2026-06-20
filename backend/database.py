@@ -1,15 +1,21 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool
 from config import DATABASE_URL
 
-# For high-concurrency async apps, NullPool allows the underlying driver (asyncpg)
-# to instantly create and close connections without getting stuck in a queue.
+# Dynamically set pool sizes based on environment variables.
+# If the variables aren't set (like on your local laptop), it defaults to safe limits.
+POOL_SIZE = int(os.getenv("DB_POOL_SIZE", 20))
+MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", 10))
+POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", 60))
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    poolclass=NullPool,  # FIX: Bypasses connection pool limits entirely
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_timeout=POOL_TIMEOUT,
+    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(

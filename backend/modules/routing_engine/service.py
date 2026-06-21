@@ -13,19 +13,38 @@ logger = logging.getLogger(__name__)
 _GEOJSON_CACHE = None
 _MEM_GRAPH = None
 
-async def _get_graph() -> nx.MultiDiGraph:
-    """Loads the OSMnx graph from disk into RAM in a background thread."""
+def init_routing_graph():
+    """
+    Synchronous baseline loader called explicitly on app startup.
+    Ensures the 30-second parsing delay happens when booting the server,
+    not when a user triggers the map UI.
+    """
     global _MEM_GRAPH
     if _MEM_GRAPH is None:
-        logger.info(f"Loading GraphML into Memory from: {BENGALURU_GRAPH_CACHE} (This may take 30 seconds...)")
+        logger.info(f"[STARTUP] Warm-up: Loading GraphML into RAM from {BENGALURU_GRAPH_CACHE}...")
         try:
-            # NEW: Run the heavy blocking operation in a background thread
+            _MEM_GRAPH = ox.load_graphml(BENGALURU_GRAPH_CACHE)
+            logger.info("[STARTUP] Success: Bengaluru road network cached in memory.")
+        except Exception as e:
+            logger.error(f"[STARTUP] OSMnx load failed, falling back to pure NetworkX: {e}")
+            try:
+                _MEM_GRAPH = nx.read_graphml(BENGALURU_GRAPH_CACHE)
+                logger.info("[STARTUP] Success: Cached via fallback NetworkX engine.")
+            except Exception as crash_err:
+                logger.critical(f"[STARTUP] Critical Failure parsing GraphML file: {crash_err}")
+
+async def _get_graph() -> nx.MultiDiGraph:
+    """
+    API Accessor: Returns the pre-loaded global graph instance instantly.
+    If it's missing for some reason, it fallbacks gracefully.
+    """
+    global _MEM_GRAPH
+    if _MEM_GRAPH is None:
+        logger.warning("[PERFORMANCE WARNING] Graph was not pre-warmed on startup! Loading lazily...")
+        try:
             _MEM_GRAPH = await asyncio.to_thread(ox.load_graphml, BENGALURU_GRAPH_CACHE)
         except Exception as e:
-            logger.error(f"OSMnx load failed, falling back to pure NetworkX: {e}")
             _MEM_GRAPH = await asyncio.to_thread(nx.read_graphml, BENGALURU_GRAPH_CACHE)
-            
-        logger.info("Graph successfully loaded into memory!")
     return _MEM_GRAPH
 
 async def _get_corridor_risks() -> Dict[str, float]:

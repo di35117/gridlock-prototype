@@ -78,7 +78,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     
     try:
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt
         )
         raw_output = response.text.strip()

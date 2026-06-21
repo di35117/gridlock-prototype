@@ -27,3 +27,4 @@ pytest-asyncio==0.23.7
 testcontainers[postgres]==4.7.0
 locust==2.29.1
 aiohttp>=3.9.0
+celery==5.4.0

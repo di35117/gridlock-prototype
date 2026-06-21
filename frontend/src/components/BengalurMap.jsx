@@ -9,7 +9,8 @@ import { useSystemStore } from "../store/useSystemStore";
 import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-const MAPTILER_TOKEN = import.meta.env.VITE_MAPTILER_TOKEN;
+// Now pulling the MapmyIndia Static Key from your .env
+const MAPMYINDIA_KEY = import.meta.env.VITE_MAPMYINDIA_KEY;
 
 export default function BengaluruMap() {
   const {
@@ -21,8 +22,6 @@ export default function BengaluruMap() {
     isProcessing,
   } = useSystemStore();
   const [isMapLoading, setIsMapLoading] = useState(true);
-
-  // --- NEW: Camera Reference ---
   const mapRef = useRef(null);
 
   const [viewState, setViewState] = useState({
@@ -51,21 +50,19 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // --- NEW: The Cinematic Camera Sequence ---
   useEffect(() => {
     if (activeSurge && mapRef.current) {
       mapRef.current.flyTo({
         center: [activeSurge.longitude, activeSurge.latitude],
-        zoom: 16, // Extreme street-level zoom
-        pitch: 65, // Aggressive 3D tilt
-        bearing: 25, // Slight rotation for visual depth
-        duration: 2500, // 2.5 second cinematic sweep
+        zoom: 16,
+        pitch: 65,
+        bearing: 25,
+        duration: 2500,
         essential: true,
       });
     }
   }, [activeSurge]);
 
-  // --- NEW: React Memoization (Prevents 15-Second UI Freezes) ---
   const roadGlowStyle = useMemo(
     () => ({
       id: "road-glow-layer",
@@ -171,9 +168,37 @@ export default function BengaluruMap() {
     [isProcessing],
   );
 
-  if (!MAPTILER_TOKEN)
+  // MapmyIndia Custom JSON Style Object
+  const mapmyindiaStyle = useMemo(
+    () => ({
+      version: 8,
+      sources: {
+        "mapmyindia-raster-tiles": {
+          type: "raster",
+          tiles: [
+            `https://apis.mapmyindia.com/advancedmaps/v1/${MAPMYINDIA_KEY}/still_image?z={z}&x={x}&y={y}`,
+          ],
+          tileSize: 256,
+        },
+      },
+      layers: [
+        {
+          id: "mapmyindia-base",
+          type: "raster",
+          source: "mapmyindia-raster-tiles",
+          minzoom: 0,
+          maxzoom: 22,
+        },
+      ],
+    }),
+    [],
+  );
+
+  if (!MAPMYINDIA_KEY)
     return (
-      <div className="text-white p-4 font-mono">Missing MapTiler Token</div>
+      <div className="text-white p-4 font-mono">
+        Missing MapmyIndia Static Key
+      </div>
     );
 
   return (
@@ -193,7 +218,7 @@ export default function BengaluruMap() {
         ref={mapRef}
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
-        mapStyle={`https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_TOKEN}`}
+        mapStyle={mapmyindiaStyle} // Using MapmyIndia Tiles
       >
         <NavigationControl position="bottom-right" />
 

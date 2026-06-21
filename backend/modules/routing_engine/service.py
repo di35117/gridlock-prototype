@@ -33,14 +33,15 @@ async def _get_corridor_risks() -> Dict[str, float]:
     risks = {}
     try:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(text("SELECT corridor, current_risk_score FROM corridor_risk_profiles"))
+            # FIXED: Changed current_risk_score to risk_score
+            result = await session.execute(text("SELECT corridor, risk_score FROM corridor_risk_profiles"))
             rows = result.fetchall()
             for r in rows:
-                risks[str(r.corridor).strip().lower()] = float(r.current_risk_score)
+                # FIXED: Changed r.current_risk_score to r.risk_score
+                risks[str(r.corridor).strip().lower()] = float(r.risk_score)
     except Exception as e:
         logger.error(f"Error fetching risk scores: {e}")
     return risks
-
 async def generate_network_metrics_geojson() -> dict:
     global _GEOJSON_CACHE
     

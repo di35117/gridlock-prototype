@@ -18,7 +18,7 @@ MAPMYINDIA_STATIC_KEY = os.getenv("MAPMYINDIA_STATIC_KEY", "")
 # We safely construct absolute paths so Docker/Railway can always find them.
 BENGALURU_GRAPH_CACHE = os.getenv(
     "BENGALURU_GRAPH_CACHE",
-    str(BASE_DIR / "data" / "bengaluru_road_graph.graphml")
+    str(BASE_DIR / "data" / "bengaluru_road_graph.pkl")
 )
 
 DATA_PATH = os.getenv(

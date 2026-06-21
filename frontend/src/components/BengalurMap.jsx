@@ -11,6 +11,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 const MAPTILER_TOKEN = import.meta.env.VITE_MAPTILER_TOKEN;
 
+const IS_PROD = import.meta.env.MODE === "production";
+const API_URL = IS_PROD
+  ? "https://gridlock-prototype-production.up.railway.app"
+  : "http://localhost:8000";
+
 export default function BengaluruMap() {
   const {
     roadMetrics,
@@ -35,9 +40,7 @@ export default function BengaluruMap() {
     const fetchMetrics = async () => {
       setIsMapLoading(true);
       try {
-        const res = await fetch(
-          "http://localhost:8000/api/routing/network/metrics",
-        );
+        const res = await fetch(`${API_URL}/api/routing/network/metrics`);
         const data = await res.json();
         setRoadMetrics(data);
       } catch (err) {

@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ── Paths ──────────────────────────────────────────────────────────────
 MODELS_DIR = (
-    Path(__file__).resolve().parent.parent.parent.parent / "data" / "models"
+    Path(__file__).resolve().parent.parent.parent / "data" / "models"
 )
 
 PRIORITY_MODEL_PATH = MODELS_DIR / "priority_classifier.joblib"

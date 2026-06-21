@@ -12,12 +12,6 @@ build/
 .eggs/
 *.whl
 
-# ── ML model artifacts ───────────────────────────────────
-models/saved/
-*.lgbm
-*.pkl
-*.joblib
-
 # ── Database / cache / migrations ────────────────────────
 *.db
 *.sqlite

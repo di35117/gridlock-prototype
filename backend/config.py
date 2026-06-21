@@ -12,6 +12,7 @@ REDIS_URL            = os.getenv("REDIS_URL", "redis://localhost:6379")
 GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY  = os.getenv("GOOGLE_MAPS_API_KEY", "")
 SECRET_KEY           = os.getenv("SECRET_KEY", "btp_dev_secret_2026")
+MAPMYINDIA_STATIC_KEY = os.getenv("MAPMYINDIA_STATIC_KEY")
 
 # The data folder is one level UP from the backend folder
 ROOT_DIR = BASE_DIR.parent

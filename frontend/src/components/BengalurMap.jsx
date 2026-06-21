@@ -49,6 +49,7 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
+  // Cinematic Camera Sweeps
   useEffect(() => {
     if (activeSurge && mapRef.current) {
       mapRef.current.flyTo({
@@ -62,104 +63,45 @@ export default function BengaluruMap() {
     }
   }, [activeSurge]);
 
-  const roadGlowStyle = useMemo(
+  // --- THE WEATHER RADAR / THERMAL HEATMAP ---
+  const thermalHeatStyle = useMemo(
     () => ({
-      id: "road-glow-layer",
+      id: "thermal-heat-layer",
       type: "line",
+      // 1. The Stealth Filter: Completely hides safe roads (Removes the Neon Green)
+      filter: [">=", ["get", "risk_score"], 0.4],
       paint: {
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 12],
-        "line-blur": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 10],
-        "line-opacity": 0.4,
+        // 2. Massive width to create overlapping "clouds" instead of sharp lines
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 15, 15, 40],
+        // 3. Extreme blur to melt the geometries together
+        "line-blur": ["interpolate", ["linear"], ["zoom"], 10, 15, 15, 30],
+        "line-opacity": 0.65,
         "line-color": [
           "interpolate",
           ["linear"],
           ["get", "risk_score"],
-          0.0,
-          "#22c55e",
-          0.5,
-          "#eab308",
+          0.4,
+          "rgba(234, 179, 8, 0)", // Invisible transition
+          0.6,
+          "#eab308", // Yellow (Warning)
           0.8,
-          "#f97316",
+          "#f97316", // Orange (High Risk)
           1.0,
-          "#ef4444",
+          "#ef4444", // Red (Critical)
         ],
       },
     }),
     [],
   );
 
-  const roadRiskStyle = useMemo(
-    () => ({
-      id: "road-risk-layer",
-      type: "line",
-      paint: {
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 15, 4],
-        "line-opacity": 0.9,
-        "line-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "risk_score"],
-          0.0,
-          "#22c55e",
-          0.5,
-          "#eab308",
-          0.8,
-          "#f97316",
-          1.0,
-          "#ef4444",
-        ],
-      },
-    }),
-    [],
-  );
-
-  const roadLabelStyle = useMemo(
-    () => ({
-      id: "road-labels",
-      type: "symbol",
-      minzoom: 13,
-      layout: {
-        "symbol-placement": "line",
-        "text-field": [
-          "step",
-          ["get", "risk_score"],
-          "{name}",
-          0.1,
-          "{name} | RISK: {risk_score}",
-        ],
-        "text-size": 11,
-        "text-letter-spacing": 0.1,
-        "text-anchor": "center",
-        "text-offset": [0, -1],
-      },
-      paint: {
-        "text-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "risk_score"],
-          0.0,
-          "#9ca3af",
-          0.5,
-          "#fde047",
-          0.8,
-          "#fdba74",
-          1.0,
-          "#fca5a5",
-        ],
-        "text-halo-color": "#111827",
-        "text-halo-width": 2,
-      },
-    }),
-    [],
-  );
-
+  // THE ON-DEMAND SCANNER (The sharp AI route when an incident occurs)
   const diversionStyle = useMemo(
     () => ({
       id: "ai-route",
       type: "line",
       paint: {
         "line-color": "#3b82f6",
-        "line-width": 5,
+        "line-width": 6,
         "line-dasharray": [2, 2],
         "line-opacity": isProcessing ? 0.4 : 1.0,
       },
@@ -179,7 +121,7 @@ export default function BengaluruMap() {
           <div className="flex flex-col items-center p-6 bg-gray-900 rounded-lg border border-gray-800 shadow-2xl">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-3" />
             <h3 className="text-gray-300 font-mono text-sm tracking-widest font-bold">
-              DECOMPRESSING NETWORK GRAPH
+              DECOMPRESSING ML MATRICES
             </h3>
           </div>
         </div>
@@ -193,47 +135,52 @@ export default function BengaluruMap() {
       >
         <NavigationControl position="bottom-right" />
 
+        {/* The Predictive Weather Radar */}
         {roadMetrics && (
-          <Source
-            id="bengaluru-roads"
-            type="geojson"
-            data={roadMetrics}
-            generateId={true}
-          >
-            <Layer {...roadGlowStyle} />
-            <Layer {...roadRiskStyle} />
-            <Layer {...roadLabelStyle} />
+          <Source id="bengaluru-roads" type="geojson" data={roadMetrics}>
+            <Layer {...thermalHeatStyle} />
           </Source>
         )}
 
+        {/* The Tactical Blue Divert Line */}
         {diversions && (
           <Source id="ai-diversions" type="geojson" data={diversions}>
             <Layer {...diversionStyle} />
           </Source>
         )}
 
+        {/* The Incident Ground-Zero Pulse */}
         {activeSurge && (
           <Marker
             longitude={activeSurge.longitude}
             latitude={activeSurge.latitude}
           >
             <div className="relative flex items-center justify-center">
-              <div className="absolute w-12 h-12 bg-red-600/30 rounded-full animate-ping"></div>
-              <div className="bg-red-900 border border-red-500 p-2 rounded-full shadow-[0_0_20px_rgba(239,68,68,0.8)] z-10">
-                <AlertTriangle className="text-red-400" size={24} />
+              <div className="absolute w-16 h-16 bg-red-600/20 rounded-full animate-ping"></div>
+              <div className="bg-red-950 border-2 border-red-500 p-2 rounded-full shadow-[0_0_30px_rgba(239,68,68,1)] z-10">
+                <AlertTriangle className="text-red-500" size={28} />
               </div>
             </div>
           </Marker>
         )}
 
+        {/* --- TACTICAL BARRICADE OVERLAY --- */}
         {barricades.map((coord, idx) => (
           <Marker
             key={`barricade-${idx}`}
             longitude={coord[0]}
             latitude={coord[1]}
           >
-            <div className="bg-yellow-500/20 border-2 border-yellow-500 rounded-sm p-1 shadow-[0_0_10px_rgba(234,179,8,0.3)]">
-              <ShieldAlert size={16} className="text-yellow-500" />
+            <div className="relative flex items-center justify-center group cursor-pointer">
+              {/* Glowing forcefield effect */}
+              <div className="absolute inset-0 bg-yellow-500/50 blur-md rounded-full animate-pulse"></div>
+              {/* Physical barricade UI */}
+              <div className="relative bg-gray-950 border border-yellow-500 text-yellow-500 px-2 py-1 rounded shadow-lg flex items-center gap-2 z-10 transform hover:scale-110 transition-transform">
+                <ShieldAlert size={14} />
+                <span className="text-[10px] font-mono font-bold tracking-wider whitespace-nowrap">
+                  ROAD CLOSED
+                </span>
+              </div>
             </div>
           </Marker>
         ))}

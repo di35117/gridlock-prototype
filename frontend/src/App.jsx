@@ -74,9 +74,50 @@ function App() {
                 <TacticalResourceDashboard />
 
                 {/* 3. The LLM Output */}
-                <div className="prose prose-invert prose-sm max-w-none bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 max-h-[400px] overflow-y-auto custom-scrollbar">
                   {copilotOrder ? (
-                    <ReactMarkdown>{copilotOrder}</ReactMarkdown>
+                    <ReactMarkdown
+                      components={{
+                        h1: ({ node, ...props }) => (
+                          <h1
+                            className="text-lg font-black text-blue-400 mt-4 mb-2 tracking-wide uppercase border-b border-gray-700 pb-1"
+                            {...props}
+                          />
+                        ),
+                        h2: ({ node, ...props }) => (
+                          <h2
+                            className="text-md font-bold text-blue-300 mt-4 mb-2 uppercase"
+                            {...props}
+                          />
+                        ),
+                        h3: ({ node, ...props }) => (
+                          <h3
+                            className="text-sm font-bold text-gray-300 mt-3 mb-1"
+                            {...props}
+                          />
+                        ),
+                        p: ({ node, ...props }) => (
+                          <p
+                            className="mb-3 text-sm text-gray-300 leading-relaxed font-mono"
+                            {...props}
+                          />
+                        ),
+                        ul: ({ node, ...props }) => (
+                          <ul
+                            className="list-disc list-outside ml-4 mb-3 text-sm text-gray-300 font-mono space-y-1"
+                            {...props}
+                          />
+                        ),
+                        strong: ({ node, ...props }) => (
+                          <strong
+                            className="text-white font-bold bg-gray-800 px-1 rounded"
+                            {...props}
+                          />
+                        ),
+                      }}
+                    >
+                      {copilotOrder}
+                    </ReactMarkdown>
                   ) : (
                     <div className="text-red-400 font-mono">
                       [ERROR] Failed to generate tactical order.

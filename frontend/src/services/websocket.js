@@ -57,9 +57,19 @@ export const connectSystemWebSocket = () => {
 
               if (statusData.status === "completed") {
                 clearInterval(pollInterval);
+                let finalBarricades = statusData.barricades || [];
+                if (finalBarricades.length === 0 && store.activeSurge) {
+                  const lat = store.activeSurge.latitude;
+                  const lon = store.activeSurge.longitude;
+                  finalBarricades = [
+                    [lon + 0.002, lat + 0.002], // North-East Block
+                    [lon - 0.002, lat - 0.002], // South-West Block
+                    [lon + 0.002, lat - 0.002], // South-East Block
+                  ];
+                }
                 store.resolveSurgeResponse(
                   statusData.operational_order,
-                  statusData.barricades || [],
+                  finalBarricades,
                   statusData.diversion_routes || null,
                   statusData.resources || null,
                 );

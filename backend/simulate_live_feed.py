@@ -2,7 +2,7 @@ import time
 import requests
 
 # We are hitting /process to force FastAPI to return the exact background error
-WEBHOOK_URL = "http://localhost:8000/api/osint/process" 
+WEBHOOK_URL = "https://gridlock-prototype-production.up.railway.app/api/osint/process"
 
 mock_live_feed = [
     {

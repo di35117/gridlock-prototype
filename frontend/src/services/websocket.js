@@ -74,11 +74,13 @@ export const connectSystemWebSocket = () => {
 
                 // Read barricades list or establish clear algorithmic boundaries around localized threat
                 let finalBarricades = statusData.barricades || [];
-                if (finalBarricades.length === 0) {
+                if (finalBarricades.length === 0 && store.activeSurge) {
+                  const lat = store.activeSurge.latitude || 12.9716;
+                  const lon = store.activeSurge.longitude || 77.5946;
                   finalBarricades = [
-                    [eventLon + 0.002, eventLat + 0.002], // North-East Forcefield Block
-                    [eventLon - 0.002, eventLat - 0.002], // South-West Forcefield Block
-                    [eventLon + 0.002, eventLat - 0.002], // South-East Forcefield Block
+                    [lon + 0.002, lat + 0.002],
+                    [lon - 0.002, lat - 0.002],
+                    [lon + 0.002, lat - 0.002],
                   ];
                 }
 
@@ -87,7 +89,8 @@ export const connectSystemWebSocket = () => {
                   statusData.operational_order,
                   finalBarricades,
                   statusData.diversion_routes || null,
-                  statusData.resources || null,
+                  statusData.resources || null, // Feeds the Resource Dashboard
+                  statusData.compound_threats || null, // Feeds the Conflict Radar
                 );
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);

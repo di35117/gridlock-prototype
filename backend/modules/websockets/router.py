@@ -1,24 +1,22 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from modules.websockets.manager import notifier
+import logging
 
-router = APIRouter(prefix="/api/ws", tags=["Real-Time Protocol"])
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
-@router.websocket("/dashboard")
-async def dashboard_websocket(websocket: WebSocket):
+@router.websocket("/api/stream/live")
+async def websocket_endpoint(websocket: WebSocket, token: str = None):
     """
-    The frontend React application connects to this endpoint.
-    URL: ws://localhost:8000/api/ws/dashboard
+    Hackathon Bypass: Accepts the WebSocket connection and gracefully 
+    ignores the old React security token to prevent 403 Forbidden errors.
     """
     await notifier.connect(websocket)
     try:
         while True:
-            # We keep the connection alive. We don't expect the frontend to send 
-            # much via WS (they use standard POST for actions), but we must listen.
             data = await websocket.receive_text()
-            
-            # Optional: Ping-pong to keep connection alive
-            if data == "ping":
-                await websocket.send_text("pong")
-                
     except WebSocketDisconnect:
+        notifier.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")
         notifier.disconnect(websocket)

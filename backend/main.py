@@ -32,6 +32,7 @@ from modules.resource_recommender.router import router as resource_recommender_r
 from modules.learning_engine.router import router as learning_engine_router
 from modules.learning_engine.service import autonomous_event_learning_scan
 from modules.routing_engine.router import router as routing_engine_router
+from modules.routing_engine.service import _get_graph  # <-- IMPORTED FOR PRE-WARMING
 from modules.osint_harvester.router import router as osint_harvester_router
 from modules.websockets.router import router as websocket_router 
 from modules.cctv_ingestion.router import router as cctv_ingestion_router
@@ -56,6 +57,11 @@ async def lifespan(app: FastAPI):
         logger.info(f"Impact Forecaster trained: {metrics}")
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
+        
+    # --- PRE-WARM THE ROUTING GRAPH INTO RAM ---
+    logger.info("Pre-warming Routing Graph into RAM. This will take ~15-30 seconds...")
+    await _get_graph()
+    logger.info("Routing Graph cached successfully! Map queries will now be instant.")
         
     # --- DEMO OPTIMIZATION: Faster Daemons for Live Presentation ---
     scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15) # Sped up for demo

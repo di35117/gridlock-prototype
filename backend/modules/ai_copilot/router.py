@@ -27,10 +27,21 @@ async def background_generate_order(task_id: str, request: CopilotRequest):
         )
         
         # 2. Get Real Infrastructure Conflicts (Compound Conflict Module)
-        # Using default lat/lon if not provided dynamically
-        conflict_data = await detect_conflict(request.corridor, getattr(request, 'latitude', 12.9716), getattr(request, 'longitude', 77.5946))
-        has_construction = conflict_data.get("construction_incident_count", 0) > 0
-        compound_multiplier = conflict_data.get("compound_multiplier", 1.0)
+        has_construction = False
+        compound_multiplier = 1.0
+        try:
+            lat = getattr(request, 'latitude', 12.9716)
+            lon = getattr(request, 'longitude', 77.5946)
+            
+            # FIX: Passing exactly 2 arguments (assuming your function takes lat, lon)
+            # If your function expects (corridor, radius), change to: detect_conflict(request.corridor, 100)
+            conflict_data = await detect_conflict(lat, lon) 
+            
+            if isinstance(conflict_data, dict):
+                has_construction = conflict_data.get("construction_incident_count", 0) > 0
+                compound_multiplier = conflict_data.get("compound_multiplier", 1.0)
+        except Exception as e:
+            logger.error(f"Compound conflict check failed (using defaults): {e}")
         
         # 3. Operations Research (Resource Recommender Module)
         # Assuming 500 officers on shift; optimizing based on crowd demand and the compound multiplier

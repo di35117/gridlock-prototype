@@ -342,12 +342,35 @@ def _cast_numpy(records: list[dict]) -> list[dict]:
 # ─────────────────────────────────────────────
 # 7. ORCHESTRATOR
 # ─────────────────────────────────────────────
-
+async def _seed_construction_zones():
+    """Autonomous database seeder for construction zones (Codebase Permanent Fix)."""
+    try:
+        async with engine.begin() as conn:
+            # Check if data already exists
+            check = await conn.execute(text("SELECT COUNT(*) FROM active_construction_zones"))
+            count = check.scalar()
+            
+            if count == 0:
+                logger.info("Auto-seeding active_construction_zones for Demo/Evaluation...")
+                # Insert permanent, realistic coordinates for your demo corridors
+                insert_query = text("""
+                    INSERT INTO active_construction_zones (corridor, latitude, longitude, impact_radius)
+                    VALUES 
+                    ('Silk Board Junction', 12.9172, 77.6228, 100),
+                    ('Hebbal Flyover', 13.0382, 77.5919, 100),
+                    ('Mysore Road', 12.9388, 77.5455, 100),
+                    ('ORR East', 12.9306, 77.6689, 100)
+                """)
+                await conn.execute(insert_query)
+    except Exception as e:
+        logger.error(f"Failed to auto-seed construction zones: {e}")
 async def initialize_data_foundation() -> dict:
     """
     Called once on server startup.
-    Skips re-loading if incidents table already has data.
     """
+    # ADD THIS LINE HERE: Ensure the construction zones are always seeded first
+    await _seed_construction_zones()
+
     if await check_data_loaded():
         logger.info("Data already loaded — skipping CSV import.")
         return {"status": "already_loaded"}
@@ -368,7 +391,6 @@ async def initialize_data_foundation() -> dict:
         "incidents_loaded":   n,
         "corridors_profiled": int(df["corridor"].nunique()),
     }
-
 
 async def reload_data_foundation() -> dict:
     """Force a full reload (used by the /reload endpoint)."""

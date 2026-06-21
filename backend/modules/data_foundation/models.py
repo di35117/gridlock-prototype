@@ -100,3 +100,16 @@ class EventCauseStat(Base):
     high_priority_rate        = Column(Float,   default=0.0)   # 0-1
     median_time_to_close_hours = Column(Float,  nullable=True)
     severity_tier             = Column(Integer, default=1)     # 1=Low 2=Medium 3=High
+class ActiveConstructionZone(Base):
+    """
+    Tracks live roadwork and Metro construction coordinates.
+    Drives the Routing Engine's tactical barricading and the Compound Conflict radar.
+    """
+    __tablename__ = "active_construction_zones"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    corridor = Column(String(255), index=True)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    impact_radius = Column(Integer, default=50)
+    status = Column(String(50), default="Active")

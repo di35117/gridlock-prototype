@@ -12,10 +12,10 @@ export const connectSystemWebSocket = () => {
     const data = JSON.parse(event.data);
     const store = useSystemStore.getState();
 
-    // 1. ADD EVERYTHING TO THE LIVE INTEL FEED
+    // 1. Send all telemetry to the Intel Feed component
     store.addIntelAlert(data);
 
-    // 2. SURGE OR OSINT ALERT DETECTED -> TRIGGER COPILOT
+    // 2. Evaluate if event critical criteria triggers Copilot actions
     if (
       data.type === "TRAFFIC_SURGE" ||
       data.type === "CRITICAL_ALERT" ||
@@ -28,26 +28,40 @@ export const connectSystemWebSocket = () => {
         store.triggerSurgeResponse(data.payload || data);
 
         try {
-          // FIRE THE AI COPILOT (Using your Async Polling Pattern!)
+          // Extract coordinate items cleanly from live event stream payload structures
+          const eventLat = data.payload?.latitude || data.latitude || 12.9716;
+          const eventLon = data.payload?.longitude || data.longitude || 77.5946;
+
+          // Dispatch generation request containing accurate telemetry data coordinates
           const initialResponse = await fetch(
             "http://localhost:8000/api/copilot/generate",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                event_cause:
-                  data.payload?.event_cause || data.event_cause || "unknown",
-                corridor: data.payload?.corridor || data.corridor,
-                expected_crowd: data.payload?.estimated_impact || 1000,
+                event_cause: data.type,
+                corridor:
+                  data.corridor || (data.payload ? data.payload.corridor : ""),
+                expected_crowd: data.payload?.expected_crowd || 1000,
+                event_details: data.message || data.payload?.message || "",
                 event_datetime: new Date().toISOString(),
+                latitude: parseFloat(eventLat),
+                longitude: parseFloat(eventLon),
               }),
             },
           );
 
-          const { task_id } = await initialResponse.json();
-          if (!task_id) throw new Error("No Task ID received from backend");
+          const initialData = await initialResponse.json();
+          const task_id = initialData.task_id;
 
-          // START THE POLLING LOOP
+          if (!task_id) {
+            console.error(
+              "Failed to acquire tracking task identifier from Copilot engine backend.",
+            );
+            return;
+          }
+
+          // Initialize state check interval polling loop
           const pollInterval = setInterval(async () => {
             try {
               const statusResponse = await fetch(
@@ -56,26 +70,19 @@ export const connectSystemWebSocket = () => {
               const statusData = await statusResponse.json();
 
               if (statusData.status === "completed") {
-                console.log("====================================");
-                console.log("🔥 AI COPILOT PAYLOAD RECEIVED 🔥");
-                console.log("RAW BARRICADES DATA:", statusData.barricades);
-                console.log(
-                  "TYPE OF BARRICADES:",
-                  typeof statusData.barricades,
-                );
-                console.log("IS ARRAY?", Array.isArray(statusData.barricades));
-                console.log("FULL PAYLOAD:", statusData);
                 clearInterval(pollInterval);
+
+                // Read barricades list or establish clear algorithmic boundaries around localized threat
                 let finalBarricades = statusData.barricades || [];
-                if (finalBarricades.length === 0 && store.activeSurge) {
-                  const lat = store.activeSurge.latitude;
-                  const lon = store.activeSurge.longitude;
+                if (finalBarricades.length === 0) {
                   finalBarricades = [
-                    [lon + 0.002, lat + 0.002], // North-East Block
-                    [lon - 0.002, lat - 0.002], // South-West Block
-                    [lon + 0.002, lat - 0.002], // South-East Block
+                    [eventLon + 0.002, eventLat + 0.002], // North-East Forcefield Block
+                    [eventLon - 0.002, eventLat - 0.002], // South-West Forcefield Block
+                    [eventLon + 0.002, eventLat - 0.002], // South-East Forcefield Block
                   ];
                 }
+
+                // Push completed state payloads directly into state storage hooks
                 store.resolveSurgeResponse(
                   statusData.operational_order,
                   finalBarricades,
@@ -85,12 +92,17 @@ export const connectSystemWebSocket = () => {
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);
                 store.resolveSurgeResponse(
-                  "Tactical order generation failed.",
+                  "Tactical operational plan creation failed.",
                   [],
+                  null,
                   null,
                 );
               }
             } catch (pollErr) {
+              console.error(
+                "Asynchronous execution status poll error encountered:",
+                pollErr,
+              );
               clearInterval(pollInterval);
             }
           }, 2000);
@@ -100,6 +112,7 @@ export const connectSystemWebSocket = () => {
             "Failed to connect to AI Copilot service.",
             [],
             null,
+            null,
           );
         }
       }
@@ -108,6 +121,6 @@ export const connectSystemWebSocket = () => {
 
   ws.onclose = () => {
     ws = null;
-    setTimeout(connectSystemWebSocket, 3000); // Auto-reconnect
+    setTimeout(connectSystemWebSocket, 3000); // Trigger auto-reconnect fallback loop
   };
 };

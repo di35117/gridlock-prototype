@@ -25,10 +25,13 @@ async def geocode_location(location_name: str) -> tuple[float, float]:
     # CRITICAL FIX: URL encode the location to handle spaces safely (e.g., "Silk Board" -> "Silk%20Board")
     query = urllib.parse.quote(f"{location_name}, Bengaluru")
     url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
+    headers = {
+        "Referer": "http://localhost:5173"
+    }
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
+            async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get("results") and len(data["results"]) > 0:

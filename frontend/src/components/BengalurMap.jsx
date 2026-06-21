@@ -9,8 +9,7 @@ import { useSystemStore } from "../store/useSystemStore";
 import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-// Now pulling the MapmyIndia Static Key from your .env
-const MAPMYINDIA_KEY = import.meta.env.VITE_MAPMYINDIA_KEY;
+const MAPTILER_TOKEN = import.meta.env.VITE_MAPTILER_TOKEN;
 
 export default function BengaluruMap() {
   const {
@@ -168,37 +167,9 @@ export default function BengaluruMap() {
     [isProcessing],
   );
 
-  // MapmyIndia Custom JSON Style Object
-  const mapmyindiaStyle = useMemo(
-    () => ({
-      version: 8,
-      sources: {
-        "mapmyindia-raster-tiles": {
-          type: "raster",
-          tiles: [
-            `/mapmyindia/advancedmaps/v1/${MAPMYINDIA_KEY}/still_image?z={z}&x={x}&y={y}`,
-          ],
-          tileSize: 256,
-        },
-      },
-      layers: [
-        {
-          id: "mapmyindia-base",
-          type: "raster",
-          source: "mapmyindia-raster-tiles",
-          minzoom: 0,
-          maxzoom: 22,
-        },
-      ],
-    }),
-    [],
-  );
-
-  if (!MAPMYINDIA_KEY)
+  if (!MAPTILER_TOKEN)
     return (
-      <div className="text-white p-4 font-mono">
-        Missing MapmyIndia Static Key
-      </div>
+      <div className="text-white p-4 font-mono">Missing MapTiler Token</div>
     );
 
   return (
@@ -218,7 +189,7 @@ export default function BengaluruMap() {
         ref={mapRef}
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
-        mapStyle={mapmyindiaStyle} // Using MapmyIndia Tiles
+        mapStyle={`https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_TOKEN}`}
       >
         <NavigationControl position="bottom-right" />
 

@@ -48,15 +48,17 @@ async def lifespan(app: FastAPI):
     df_status = await data_foundation_service.initialize_data_foundation()
     logger.info(f"Data foundation: {df_status}")
     
-    if not forecaster_trainer.models_exist():
-        logger.info("No trained forecaster models found — training now …")
+    # ─── IMPACT FORECASTER INITIALIZATION ───
+    # Force fresh training on startup to clear out any stale or placeholder Git files
+    logger.info("Training and pre-loading fresh Impact Forecaster models...")
+    try:
         metrics = await forecaster_trainer.train_and_save()
         
-        # Load models into memory immediately to prevent cold-start crashes
+        # Load the newly trained models directly into RAM immediately to prevent mid-request crashes
         forecaster_service.reload_models()
-        logger.info(f"Impact Forecaster trained: {metrics}")
-    else:
-        logger.info("Impact Forecaster models already trained — skipping.")
+        logger.info(f"🚀 Impact Forecaster fully armed and loaded into memory: {metrics}")
+    except Exception as e:
+        logger.error(f"❌ Critical failure during startup model training: {e}")
         
     # --- WE ARE BACK IN BUSINESS ---
     # Because we are using the optimized Pickle binary, this takes <1s and consumes minimal RAM!

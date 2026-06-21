@@ -58,10 +58,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Impact Forecaster models already trained — skipping.")
         
-    # --- PRE-WARM THE ROUTING GRAPH INTO RAM ---
-    logger.info("Pre-warming Routing Graph into RAM. This will take ~15-30 seconds...")
-    await _get_graph()
-    logger.info("Routing Graph cached successfully! Map queries will now be instant.")
+    # 🚨 OOM FIX: Pre-warming commented out to survive Railway's 500MB memory limit!
+    # The graph will now load lazily (only when the very first map query happens).
+    # logger.info("Pre-warming Routing Graph into RAM. This will take ~15-30 seconds...")
+    # try:
+    #     await _get_graph()
+    #     logger.info("Routing Graph cached successfully! Map queries will now be instant.")
+    # except Exception as e:
+    #     logger.warning(f"Pre-warm failed: {e}")
         
     # --- DEMO OPTIMIZATION: Faster Daemons for Live Presentation ---
     scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15) # Sped up for demo

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware"; // <-- Add this import
+import { persist } from "zustand/middleware";
 
 export const useSystemStore = create(
   persist(
@@ -11,6 +11,7 @@ export const useSystemStore = create(
       barricades: [],
       diversions: null,
       resources: null,
+      compoundThreats: null, // <-- ADDED: Holds infrastructure math
       isProcessing: false,
 
       setRoadMetrics: (data) => set({ roadMetrics: data }),
@@ -28,6 +29,7 @@ export const useSystemStore = create(
           barricades: [],
           diversions: null,
           resources: null,
+          compoundThreats: null,
         }),
 
       resolveSurgeResponse: (
@@ -35,17 +37,17 @@ export const useSystemStore = create(
         barricadeData,
         diversionData,
         resourceData,
+        threatData, // <-- ADDED
       ) =>
         set({
           copilotOrder: copilotText,
           barricades: barricadeData,
           diversions: diversionData,
           resources: resourceData,
+          compoundThreats: threatData || null, // <-- ADDED
           isProcessing: false,
         }),
     }),
-    {
-      name: "btp-command-storage", // <-- This saves it to Local Storage!
-    },
+    { name: "btp-command-storage" },
   ),
 );

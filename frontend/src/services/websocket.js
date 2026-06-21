@@ -1,12 +1,20 @@
 // src/services/websocket.js
 import { useSystemStore } from "../store/useSystemStore";
 
+const IS_PROD = import.meta.env.MODE === "production";
+const WS_URL = IS_PROD
+  ? "wss://gridlock-prototype-production.up.railway.app/api/stream/live"
+  : "ws://localhost:8000/api/stream/live";
+const API_URL = IS_PROD
+  ? "https://gridlock-prototype-production.up.railway.app"
+  : "http://localhost:8000";
+
 let ws = null;
 
 export const connectSystemWebSocket = () => {
   if (ws) return;
 
-  ws = new WebSocket("ws://localhost:8000/api/stream/live");
+  ws = new WebSocket(WS_URL);
 
   ws.onmessage = async (event) => {
     const data = JSON.parse(event.data);
@@ -34,7 +42,7 @@ export const connectSystemWebSocket = () => {
 
           // Dispatch generation request containing accurate telemetry data coordinates
           const initialResponse = await fetch(
-            "http://localhost:8000/api/copilot/generate",
+            `${API_URL}/api/copilot/generate`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -65,7 +73,7 @@ export const connectSystemWebSocket = () => {
           const pollInterval = setInterval(async () => {
             try {
               const statusResponse = await fetch(
-                `http://localhost:8000/api/copilot/status/${task_id}`,
+                `${API_URL}/api/copilot/status/${task_id}`,
               );
               const statusData = await statusResponse.json();
 
@@ -127,3 +135,4 @@ export const connectSystemWebSocket = () => {
     setTimeout(connectSystemWebSocket, 3000); // Trigger auto-reconnect fallback loop
   };
 };
+

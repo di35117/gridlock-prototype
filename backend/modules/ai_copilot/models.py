@@ -10,6 +10,13 @@ class CopilotRequest(BaseModel):
     expected_crowd: int = Field(1000, description="Estimated attendance")
     event_details: str = Field("", description="Additional context from the officer")
     event_datetime: datetime = Field(..., description="When the event occurs")
+    latitude: float = Field(12.9716, description="Latitude of the live event center point")
+    longitude: float = Field(77.5946, description="Longitude of the live event center point")
 
 class CopilotResponse(BaseModel):
     operational_order: str = Field(..., description="Markdown formatted operational plan")
+
+class TaskResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str

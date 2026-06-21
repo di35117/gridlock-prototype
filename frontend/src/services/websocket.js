@@ -1,13 +1,13 @@
 // src/services/websocket.js
 import { useSystemStore } from "../store/useSystemStore";
 
-const IS_PROD = import.meta.env.MODE === "production";
-const WS_URL = IS_PROD
-  ? "wss://gridlock-prototype-production.up.railway.app/api/stream/live"
-  : "ws://localhost:8000/api/stream/live";
-const API_URL = IS_PROD
-  ? "https://gridlock-prototype-production.up.railway.app"
-  : "http://localhost:8000";
+// Pulls from Vercel in production, or defaults to localhost in development
+const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
+// Magically swaps https:// for wss:// and http:// for ws://
+const WS_URL =
+  API_URL.replace("https://", "wss://").replace("http://", "ws://") +
+  "/api/stream/live";
 
 let ws = null;
 
@@ -135,4 +135,3 @@ export const connectSystemWebSocket = () => {
     setTimeout(connectSystemWebSocket, 3000); // Trigger auto-reconnect fallback loop
   };
 };
-

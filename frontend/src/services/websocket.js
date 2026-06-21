@@ -56,6 +56,15 @@ export const connectSystemWebSocket = () => {
               const statusData = await statusResponse.json();
 
               if (statusData.status === "completed") {
+                console.log("====================================");
+                console.log("🔥 AI COPILOT PAYLOAD RECEIVED 🔥");
+                console.log("RAW BARRICADES DATA:", statusData.barricades);
+                console.log(
+                  "TYPE OF BARRICADES:",
+                  typeof statusData.barricades,
+                );
+                console.log("IS ARRAY?", Array.isArray(statusData.barricades));
+                console.log("FULL PAYLOAD:", statusData);
                 clearInterval(pollInterval);
                 let finalBarricades = statusData.barricades || [];
                 if (finalBarricades.length === 0 && store.activeSurge) {

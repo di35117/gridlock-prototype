@@ -52,7 +52,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     
     client = get_gemini_client()
     
-    # 1. Force Gemini to act as a Named Entity Recognition (NER) extractor
+    # 1. THE ESCAPE HATCH: Force Gemini to return "UNKNOWN" if no location exists
     prompt = f"""
     You are an intelligence extraction pipeline for the Bengaluru Traffic Police.
     Extract the event details from the following unstructured text.
@@ -60,10 +60,10 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     RAW TEXT: "{raw_text}"
     
     RULES:
-    1. 'corridor' MUST be a specific location, neighborhood, or major road in Bengaluru mentioned in the text (e.g., 'Silk Board', 'MG Road', 'Mysore Road').
-    2. 'event_cause' MUST be one of: 'public_event', 'VIP_movement', 'protest', 'procession', 'construction'.
+    1. 'corridor' MUST be a specific location, neighborhood, or major road in Bengaluru mentioned in the text. IF NO SPECIFIC LOCATION IS MENTIONED, YOU MUST EXACTLY OUTPUT: "UNKNOWN".
+    2. 'event_cause' MUST be one of: 'public_event', 'VIP_movement', 'protest', 'procession', 'construction', 'general_threat'.
     3. 'expected_crowd' MUST be an integer. Guess based on the text context if not explicit.
-    4. 'hours_from_now' MUST be an integer representing when the event starts (e.g., 24 for tomorrow).
+    4. 'hours_from_now' MUST be an integer representing when the event starts.
     5. 'duration_hours' MUST be an integer representing how long the event lasts.
     
     OUTPUT FORMAT: You must output ONLY a valid JSON object. No markdown, no backticks, no explanations.
@@ -82,10 +82,9 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
             contents=prompt
         )
         raw_output = response.text.strip()
-        
-        if raw_output.startswith("```json"):
+        if raw_output.startswith("```json"): 
             raw_output = raw_output[7:-3]
-        elif raw_output.startswith("```"):
+        elif raw_output.startswith("```"): 
             raw_output = raw_output[3:-3]
             
         extracted_data = json.loads(raw_output.strip())
@@ -95,59 +94,68 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         logger.error(f"Failed to extract intel via Gemini: {e}")
         raise HTTPException(status_code=422, detail="Could not parse valid event data from the text.")
 
-    # 2. FULLY DYNAMIC: Convert extracted text to Lat/Lon via MapmyIndia
-    lat, lon = await geocode_location(extracted_data["corridor"])
+    corridor_name = extracted_data.get("corridor", "UNKNOWN")
+
+    # 2. THE GEOCODE BYPASS: Handle "UNKNOWN" locations gracefully
+    if corridor_name == "UNKNOWN":
+        logger.info("No specific location detected in OSINT. Flagging as City-Wide Alert.")
+        lat, lon = 12.9716, 77.5946  # Geographic center of Bengaluru
+        ui_action = "SOFT_ALERT"     # Tells React NOT to snap the camera or draw barricades
+        alert_message = f"City-wide {extracted_data['event_cause']} detected via {source}. Awaiting location telemetry."
+    else:
+        # It has a location, proceed with MapmyIndia
+        lat, lon = await geocode_location(corridor_name)
+        ui_action = "TRIGGER_SIREN_AND_SNAP_MAP"
+        alert_message = f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required."
     
-    # 3. Calculate Dates and Times
+    # 3. Calculate Dates and Forecast
     start_time = datetime.now() + timedelta(hours=extracted_data.get("hours_from_now", 24))
     end_time = start_time + timedelta(hours=extracted_data.get("duration_hours", 4))
     
-    # 4. Autonomously Forecast the Risk
     try:
         forecast = await predict(
             event_cause=extracted_data["event_cause"],
-            corridor=extracted_data["corridor"],
+            corridor=corridor_name,
             hour_of_day=start_time.hour,
             day_of_week=start_time.weekday()
         )
         predicted_risk = forecast["compound_risk_score"]
     except Exception as e:
-        logger.error(f"Impact Forecaster failed during OSINT pipeline: {e}")
-        raise HTTPException(status_code=500, detail="Failed to forecast risk.")
-    
-    # 5. FULLY DYNAMIC Z-SCORE: Mathematically derive anomaly score from ML risk
-    # If ML predicts 0.9 risk, Z-Score becomes 3.15 (Triggering the UI Radar)
+        logger.error(f"Impact Forecaster failed: {e}")
+        predicted_risk = 0.5
+
     dynamic_z_score = round(predicted_risk * 3.5, 2)
     
-    # 6. Autonomously Register the Event into the Learning Engine
+    # 4. Only register to Learning Engine if we actually have a corridor
     event_id = f"OSINT-{uuid.uuid4().hex[:6].upper()}"
+    reg_message = "Event logged as city-wide. Not added to corridor learning engine."
     
-    try:
-        registration_result = await register_active_event(
-            event_id=event_id,
-            corridor=extracted_data["corridor"],
-            event_cause=extracted_data["event_cause"],
-            predicted_risk=predicted_risk,
-            expected_end_time=end_time
-        )
-        reg_message = registration_result["message"]
-    except Exception as e:
-        logger.error(f"Failed to register OSINT event to Learning Engine: {e}")
-        reg_message = "Event queued for dashboard, but failed to register in Learning Engine."
+    if corridor_name != "UNKNOWN":
+        try:
+            registration_result = await register_active_event(
+                event_id=event_id,
+                corridor=corridor_name,
+                event_cause=extracted_data["event_cause"],
+                predicted_risk=predicted_risk,
+                expected_end_time=end_time
+            )
+            reg_message = registration_result["message"]
+        except Exception as e:
+            logger.error(f"Failed to register OSINT event: {e}")
 
-    # 7. Real-Time WebSocket Broadcast with DYNAMIC Data
+    # 5. Broadcast to React
     alert_payload = {
         "type": "CRITICAL_ALERT",
         "timestamp": datetime.now().isoformat(),
         "source": f"OSINT_Harvester ({source})",
-        "corridor": extracted_data["corridor"],
-        "latitude": lat,             # <--- DYNAMIC MapmyIndia Coordinates
-        "longitude": lon,            # <--- DYNAMIC MapmyIndia Coordinates
-        "z_score": dynamic_z_score,  # <--- DYNAMIC Math to trigger UI
+        "corridor": corridor_name if corridor_name != "UNKNOWN" else "BENGALURU CITY WIDE",
+        "latitude": lat,             
+        "longitude": lon,            
+        "z_score": dynamic_z_score,  
         "risk_level": forecast["risk_level"],
         "predicted_closure_probability": forecast["closure_probability"],
-        "message": f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required.",
-        "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
+        "message": alert_message,
+        "ui_action": ui_action # Drives the Frontend logic
     }
     
     await notifier.broadcast_alert(alert_payload)
@@ -156,11 +164,9 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         "status": "OSINT Processing Complete",
         "extracted_data": {
             "event_id": event_id,
-            "corridor": extracted_data["corridor"],
-            "latitude": lat,
-            "longitude": lon,
+            "corridor": corridor_name,
             "event_cause": extracted_data["event_cause"],
-            "expected_crowd": extracted_data["expected_crowd"],
+            "expected_crowd": extracted_data.get("expected_crowd", 0),
             "start_time": start_time.isoformat(),
             "end_time": end_time.isoformat()
         },

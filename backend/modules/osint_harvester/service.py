@@ -1,6 +1,7 @@
 import logging
 import json
 import uuid
+import aiohttp
 from datetime import datetime, timedelta
 from fastapi import HTTPException
 
@@ -9,8 +10,33 @@ from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.learning_engine.service import register_active_event
 from modules.websockets.manager import notifier
+from config import MAPMYINDIA_STATIC_KEY
 
 logger = logging.getLogger(__name__)
+
+async def geocode_location(location_name: str) -> tuple[float, float]:
+    """
+    Enterprise Integration: Uses MapmyIndia Geocoding API to convert 
+    extracted text into exact ground-truth Indian coordinates.
+    """
+    logger.info(f"Geocoding location via MapmyIndia: {location_name}")
+    url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/geo_code?addr={location_name}, Bengaluru"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("results") and len(data["results"]) > 0:
+                        lat = data["results"][0]["lat"]
+                        lon = data["results"][0]["lng"]
+                        logger.info(f"Geocoded successfully: {lat}, {lon}")
+                        return float(lat), float(lon)
+    except Exception as e:
+        logger.error(f"MapmyIndia Geocoding Error: {e}")
+    
+    logger.warning("Geocoding failed. Falling back to Bengaluru City Center.")
+    return 12.9716, 77.5946 # Fallback
 
 async def process_osint_intel(raw_text: str, source: str) -> dict:
     logger.info(f"Processing OSINT intel from {source}...")
@@ -60,11 +86,14 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         logger.error(f"Failed to extract intel via Gemini: {e}")
         raise HTTPException(status_code=422, detail="Could not parse valid event data from the text.")
 
-    # 2. Calculate Dates and Times
+    # 2. MapmyIndia Geocoding Translation
+    lat, lon = await geocode_location(extracted_data["corridor"])
+    
+    # 3. Calculate Dates and Times
     start_time = datetime.now() + timedelta(hours=extracted_data.get("hours_from_now", 24))
     end_time = start_time + timedelta(hours=extracted_data.get("duration_hours", 4))
     
-    # 3. Autonomously Forecast the Risk
+    # 4. Autonomously Forecast the Risk
     try:
         forecast = await predict(
             event_cause=extracted_data["event_cause"],
@@ -72,13 +101,12 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
             hour_of_day=start_time.hour,
             day_of_week=start_time.weekday()
         )
-        # BUG FIX: Standardized to 'compound_risk_score' to match CCTV and Learning Engine math
         predicted_risk = forecast["compound_risk_score"]
     except Exception as e:
         logger.error(f"Impact Forecaster failed during OSINT pipeline: {e}")
         raise HTTPException(status_code=500, detail="Failed to forecast risk.")
     
-    # 4. Autonomously Register the Event into the Learning Engine
+    # 5. Autonomously Register the Event into the Learning Engine
     event_id = f"OSINT-{uuid.uuid4().hex[:6].upper()}"
     
     try:
@@ -94,12 +122,14 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         logger.error(f"Failed to register OSINT event to Learning Engine: {e}")
         reg_message = "Event queued for dashboard, but failed to register in Learning Engine."
 
-    # 5. Real-Time WebSocket Broadcast to React Dashboard
+    # 6. Real-Time WebSocket Broadcast to React Dashboard (NOW WITH MAPMYINDIA COORDS)
     alert_payload = {
         "type": "CRITICAL_ALERT",
         "timestamp": datetime.now().isoformat(),
         "source": f"OSINT_Harvester ({source})",
         "corridor": extracted_data["corridor"],
+        "latitude": lat,   # Mappls Data
+        "longitude": lon,  # Mappls Data
         "risk_level": forecast["risk_level"],
         "predicted_closure_probability": forecast["closure_probability"],
         "message": f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required.",
@@ -113,6 +143,8 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         "extracted_data": {
             "event_id": event_id,
             "corridor": extracted_data["corridor"],
+            "latitude": lat,
+            "longitude": lon,
             "event_cause": extracted_data["event_cause"],
             "expected_crowd": extracted_data["expected_crowd"],
             "start_time": start_time.isoformat(),

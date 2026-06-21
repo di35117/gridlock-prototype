@@ -25,14 +25,11 @@ async def background_generate_order(task_id: str, request: CopilotRequest):
             event_details=request.event_details,
             event_datetime=request.event_datetime
         )
-        
-        # 2. Get Real Infrastructure Conflicts (Compound Conflict Module)
-        # 2. Get Real Infrastructure Conflicts (Compound Conflict Module)
         has_construction = False
         compound_multiplier = 1.0
         try:
-            # FIX: Passing the Corridor Name (String) to satisfy the SQL query
-            conflict_data = await detect_conflict(request.corridor, 100) 
+            # FIX: Passing corridor and event_cause exactly as the database expects
+            conflict_data = await detect_conflict(request.corridor, request.event_cause) 
             
             if isinstance(conflict_data, dict):
                 has_construction = conflict_data.get("construction_incident_count", 0) > 0

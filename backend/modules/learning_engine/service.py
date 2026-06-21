@@ -8,20 +8,11 @@ import logging
 import random
 import json
 from datetime import datetime
-import googlemaps
 import redis.asyncio as redis
 
-from config import GOOGLE_MAPS_API_KEY, REDIS_URL
+from config import REDIS_URL
 
 logger = logging.getLogger(__name__)
-
-# Initialize Google Maps
-gmaps = None
-if GOOGLE_MAPS_API_KEY:
-    try:
-        gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
-    except Exception as e:
-        logger.warning(f"Failed to initialize Google Maps client: {e}")
 
 # Initialize async Redis client for persistent learning memory
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
@@ -44,33 +35,16 @@ async def register_active_event(event_id: str, corridor: str, event_cause: str, 
 
 
 async def poll_live_congestion(corridor_origin: str, corridor_dest: str, is_demo_mode: bool) -> float:
-    """Polls Google Maps API to calculate the real-time congestion ratio."""
-    if is_demo_mode or not gmaps:
-        logger.info(f"[SIMULATION] Polling live map data for {corridor_origin}...")
-        return random.uniform(1.3, 2.0)  # Simulate typical congestion spike
-        
-    try:
-        now = datetime.now()
-        result = gmaps.distance_matrix(
-            origins=[corridor_origin],
-            destinations=[corridor_dest],
-            mode="driving",
-            departure_time=now
-        )
-        
-        leg = result['rows'][0]['elements'][0]
-        if 'duration_in_traffic' not in leg:
-            logger.warning("duration_in_traffic missing from map API. Defaulting to 1.0")
-            return 1.0
-            
-        normal_duration = leg['duration']['value']
-        traffic_duration = leg['duration_in_traffic']['value']
-        
-        return traffic_duration / normal_duration if normal_duration > 0 else 1.0
-        
-    except Exception as e:
-        logger.error(f"Google Maps API Error: {e}")
-        return 1.0
+    """
+    Hackathon Bypass: Simulates polling live map data to calculate real-time congestion ratio.
+    Bypasses paid Google APIs to maintain a sovereign, air-gapped system.
+    """
+    logger.info(f"[SIMULATION] Polling live map data for {corridor_origin} to {corridor_dest}...")
+    
+    # Simulate typical congestion spike between 1.3x and 2.0x normal traffic duration
+    simulated_traffic_ratio = random.uniform(1.3, 2.0)
+    
+    return simulated_traffic_ratio
 
 
 async def process_learning_feedback(corridor: str, event_cause: str, predicted_risk: float, observed_ratio: float = None, is_demo_mode: bool = False) -> dict:

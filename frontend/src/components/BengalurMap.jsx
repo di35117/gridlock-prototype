@@ -176,7 +176,7 @@ export default function BengaluruMap() {
         "mapmyindia-raster-tiles": {
           type: "raster",
           tiles: [
-            `https://apis.mapmyindia.com/advancedmaps/v1/${MAPMYINDIA_KEY}/still_image?z={z}&x={x}&y={y}`,
+            `/mapmyindia/advancedmaps/v1/${MAPMYINDIA_KEY}/still_image?z={z}&x={x}&y={y}`,
           ],
           tileSize: 256,
         },

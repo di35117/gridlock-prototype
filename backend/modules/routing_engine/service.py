@@ -1,6 +1,7 @@
 import logging
 import networkx as nx
 import osmnx as ox
+import asyncio
 from typing import Dict, Any
 from sqlalchemy import text
 from database import AsyncSessionLocal
@@ -13,15 +14,18 @@ _GEOJSON_CACHE = None
 _MEM_GRAPH = None
 
 async def _get_graph() -> nx.MultiDiGraph:
-    """Loads the OSMnx graph from disk into RAM only once."""
+    """Loads the OSMnx graph from disk into RAM in a background thread."""
     global _MEM_GRAPH
     if _MEM_GRAPH is None:
-        logger.info(f"Loading GraphML into Memory from: {BENGALURU_GRAPH_CACHE}")
+        logger.info(f"Loading GraphML into Memory from: {BENGALURU_GRAPH_CACHE} (This may take 30 seconds...)")
         try:
-            _MEM_GRAPH = ox.load_graphml(BENGALURU_GRAPH_CACHE)
+            # NEW: Run the heavy blocking operation in a background thread
+            _MEM_GRAPH = await asyncio.to_thread(ox.load_graphml, BENGALURU_GRAPH_CACHE)
         except Exception as e:
             logger.error(f"OSMnx load failed, falling back to pure NetworkX: {e}")
-            _MEM_GRAPH = nx.read_graphml(BENGALURU_GRAPH_CACHE)
+            _MEM_GRAPH = await asyncio.to_thread(nx.read_graphml, BENGALURU_GRAPH_CACHE)
+            
+        logger.info("Graph successfully loaded into memory!")
     return _MEM_GRAPH
 
 async def _get_corridor_risks() -> Dict[str, float]:

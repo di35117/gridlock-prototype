@@ -12,6 +12,7 @@ REDIS_URL             = os.getenv("REDIS_URL", "redis://localhost:6379")
 GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY   = os.getenv("GOOGLE_MAPS_API_KEY", "")
 SECRET_KEY            = os.getenv("SECRET_KEY", "btp_dev_secret_2026")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 # --- MapmyIndia Enterprise Credentials ---
 MAPMYINDIA_STATIC_KEY    = os.getenv("MAPMYINDIA_STATIC_KEY", "")

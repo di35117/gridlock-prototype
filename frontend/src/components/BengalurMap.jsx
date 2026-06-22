@@ -5,6 +5,9 @@ import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
+// Global reference hook so CustomMapMarker can access the instance safely outside the render cycle
+let sharedMapInstance = null;
+
 export default function BengaluruMap() {
   const {
     roadMetrics,
@@ -16,9 +19,10 @@ export default function BengaluruMap() {
   } = useSystemStore();
 
   const [isMapLoading, setIsMapLoading] = useState(true);
+  const [mapRenderTrigger, setMapRenderTrigger] = useState(0); // Safely triggers marker recalculations
   const mapRef = useRef(null);
 
-  // 1. Fetch initial road metrics (Your original network status logic)
+  // 1. Fetch initial road metrics
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -46,21 +50,24 @@ export default function BengaluruMap() {
     mappls.initialize(MAPMYINDIA_TOKEN, () => {
       const mapObject = mappls_map({
         id: "mapmyindia-container",
-        center: [12.9716, 77.5946], // Bangalore Center [Lat, Lng]
+        center: [12.9716, 77.5946],
         zoom: 12.5,
-        theme: "dark", // Using native dark mode
+        theme: "dark",
         zoomControl: true,
         location: true,
       });
 
       mapObject.on("load", () => {
-        setIsMapLoading(false);
         mapRef.current = mapObject;
+        sharedMapInstance = mapObject;
+        setIsMapLoading(false);
+        setMapRenderTrigger((prev) => prev + 1); // Signal markers that map is ready
       });
     });
 
     return () => {
       if (mapRef.current) mapRef.current.remove();
+      sharedMapInstance = null;
     };
   }, []);
 
@@ -85,7 +92,7 @@ export default function BengaluruMap() {
     const map = mapRef.current;
     if (!map || isMapLoading) return;
 
-    // --- A. THE WEATHER RADAR / THERMAL ROAD HEATMAP ---
+    // --- A. THERMAL ROAD HEATMAP ---
     if (roadMetrics) {
       if (map.getSource("bengaluru-roads")) {
         map.getSource("bengaluru-roads").setData(roadMetrics);
@@ -121,7 +128,7 @@ export default function BengaluruMap() {
       }
     }
 
-    // --- B. THE AI TACTICAL DIVERSION ROUTES ---
+    // --- B. AI TACTICAL DIVERSION ROUTES ---
     if (diversions) {
       if (map.getSource("ai-diversions")) {
         map.getSource("ai-diversions").setData(diversions);
@@ -226,17 +233,16 @@ export default function BengaluruMap() {
         </div>
       )}
 
-      {/* MapmyIndia Injection Container */}
       <div
         id="mapmyindia-container"
         className="absolute inset-0 w-full h-full"
       />
 
-      {/* --- DOM MARKERS OVERLAY --- */}
+      {/* --- FIXED DOM MARKERS OVERLAY --- */}
       {/* 1. Incident Ground-Zero Pulse */}
       {!isMapLoading && activeSurge && (
         <CustomMapMarker
-          map={mapRef.current}
+          mapTrigger={mapRenderTrigger}
           longitude={activeSurge.longitude || 77.5383}
           latitude={activeSurge.latitude || 12.9562}
         >
@@ -255,7 +261,7 @@ export default function BengaluruMap() {
         barricades.map((coord, idx) => (
           <CustomMapMarker
             key={`barricade-${idx}`}
-            map={mapRef.current}
+            mapTrigger={mapRenderTrigger}
             longitude={coord[0]}
             latitude={coord[1]}
           >
@@ -275,17 +281,17 @@ export default function BengaluruMap() {
 }
 
 // -----------------------------------------------------------------
-// Helper Component: Keeps your custom Lucide-React UI markers locked
-// precisely to the MapmyIndia coordinates without needing complex wrappers
+// Helper Component: Safe projection calculation without passing raw ref values during render
 // -----------------------------------------------------------------
-function CustomMapMarker({ map, longitude, latitude, children }) {
+function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
   useEffect(() => {
+    // Read the instance from our module-scoped helper safely inside the effect hook
+    const map = sharedMapInstance;
     if (!map) return;
 
     const updatePosition = () => {
-      // .project() converts GPS coordinates to screen X/Y pixels
       const pos = map.project([longitude, latitude]);
       setPosition({ x: pos.x, y: pos.y });
     };
@@ -298,7 +304,7 @@ function CustomMapMarker({ map, longitude, latitude, children }) {
       map.off("move", updatePosition);
       map.off("zoom", updatePosition);
     };
-  }, [map, longitude, latitude]);
+  }, [mapTrigger, longitude, latitude]);
 
   return (
     <div
@@ -306,7 +312,7 @@ function CustomMapMarker({ map, longitude, latitude, children }) {
         position: "absolute",
         left: position.x,
         top: position.y,
-        transform: "translate(-50%, -50%)", // Centers the icon perfectly on the coordinate
+        transform: "translate(-50%, -50%)",
         pointerEvents: "none",
         zIndex: 20,
       }}

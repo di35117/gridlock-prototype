@@ -5,9 +5,8 @@ import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
-// 1. Initialize the Mappls Class Object globally for the component
+// 1. Initialize the Mappls Class Object globally
 const mapplsClassObject = new mappls();
-
 let sharedMapInstance = null;
 
 export default function BengaluruMap() {
@@ -24,23 +23,36 @@ export default function BengaluruMap() {
   const [mapRenderTrigger, setMapRenderTrigger] = useState(0);
   const mapRef = useRef(null);
 
-  // Fetch initial road metrics
+  // --- FIX 1: Robust Network Fetching ---
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const API_URL =
+        let rawUrl =
           import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-        const res = await fetch(`${API_URL}/api/routing/network/metrics`);
+
+        // Ensure absolute URL to prevent fetching Vercel 404 HTML pages
+        if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+          rawUrl = `https://${rawUrl}`;
+        }
+
+        const endpoint = `${rawUrl}/api/routing/network/metrics`;
+        const res = await fetch(endpoint);
+
+        // Prevent "Unexpected token T" JSON parsing errors
+        if (!res.ok) {
+          throw new Error(`Server rejected request with status: ${res.status}`);
+        }
+
         const data = await res.json();
         setRoadMetrics(data);
       } catch (err) {
-        console.error("Failed to load road metrics", err);
+        console.error("Failed to load road metrics:", err.message);
       }
     };
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // 2. Correct NPM Package Initialization
+  // --- FIX 2: Correct Mappls SDK Initialization ---
   useEffect(() => {
     if (!MAPMYINDIA_TOKEN) {
       console.error(
@@ -49,13 +61,16 @@ export default function BengaluruMap() {
       return;
     }
 
-    // Pass { map: true } to load the core map library
     mapplsClassObject.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
-      // Use the class method .Map() and nest settings inside 'properties'
+      // Clear any existing map instance if React StrictMode fires twice
+      if (mapRef.current) {
+        mapRef.current.remove();
+      }
+
       const mapObject = mapplsClassObject.Map({
         id: "mapmyindia-container",
         properties: {
-          center: [12.9716, 77.5946],
+          center: [12.9716, 77.5946], // MapmyIndia core uses [Lat, Lng] here
           zoom: 12.5,
           theme: "dark",
           zoomControl: true,
@@ -239,6 +254,7 @@ export default function BengaluruMap() {
         </div>
       )}
 
+      {/* The DOM ID must exactly match the initialization string */}
       <div
         id="mapmyindia-container"
         className="absolute inset-0 w-full h-full"
@@ -284,7 +300,7 @@ export default function BengaluruMap() {
   );
 }
 
-// Custom Map Marker Helper
+// --- FIX 3: Bulletproof Map Marker Helper ---
 function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
@@ -293,8 +309,25 @@ function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
     if (!map) return;
 
     const updatePosition = () => {
-      const pos = map.project([longitude, latitude]);
-      setPosition({ x: pos.x, y: pos.y });
+      // Safety guard against bad backend data
+      if (
+        longitude == null ||
+        latitude == null ||
+        isNaN(longitude) ||
+        isNaN(latitude)
+      ) {
+        return;
+      }
+
+      try {
+        const pos = map.project([longitude, latitude]);
+        // Strict check to prevent TypeError: Cannot read properties of undefined
+        if (pos && pos.x !== undefined && pos.y !== undefined) {
+          setPosition({ x: pos.x, y: pos.y });
+        }
+      } catch (err) {
+        console.warn("Map projection calculation delayed...", err);
+      }
     };
 
     updatePosition();

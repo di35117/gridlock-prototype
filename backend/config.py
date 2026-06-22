@@ -13,6 +13,7 @@ GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY   = os.getenv("GOOGLE_MAPS_API_KEY", "")
 SECRET_KEY            = os.getenv("SECRET_KEY", "btp_dev_secret_2026")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+DEMO_MODE = os.getenv("DEMO_MODE", "True").lower() in ("true", "1", "yes")
 
 # --- MapmyIndia Enterprise Credentials ---
 MAPMYINDIA_STATIC_KEY    = os.getenv("MAPMYINDIA_STATIC_KEY", "")

@@ -5,6 +5,7 @@ import aiohttp
 import urllib.parse
 from datetime import datetime, timedelta
 from fastapi import HTTPException
+from google.genai import types  # Import types for native structured JSON schema compliance
 
 # Import the modern client setup
 from modules.ai_copilot.service import get_gemini_client
@@ -17,14 +18,14 @@ logger = logging.getLogger(__name__)
 
 async def geocode_location(location_name: str) -> tuple[float, float]:
     """
-    Enterprise Integration: Uses your ACTIVE MapmyIndia Geocoding API to convert 
+    Enterprise Integration: Uses active MapmyIndia Geocoding API to convert 
     extracted text into exact ground-truth Indian coordinates dynamically.
     """
     logger.info(f"Geocoding dynamic location via MapmyIndia: {location_name}")
     
-    # CRITICAL FIX: URL encode the location to handle spaces safely (e.g., "Silk Board" -> "Silk%20Board")
+    # URL encode the location to handle spaces safely (e.g., "Silk Board" -> "Silk%20Board")
     query = urllib.parse.quote(f"{location_name}, Bengaluru")
-    url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
+    url = f"[https://apis.mapmyindia.com/advancedmaps/v1/](https://apis.mapmyindia.com/advancedmaps/v1/){MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
     headers = {
         "Referer": "http://localhost:5173"
     }
@@ -46,7 +47,7 @@ async def geocode_location(location_name: str) -> tuple[float, float]:
     except Exception as e:
         logger.error(f"MapmyIndia Geocoding Error: {e}")
     
-    # Safe Fallback to a high-risk corridor just in case API limits are hit during demo
+    # Safe Fallback to a high-risk corridor if API limits are reached or timeout occurs
     logger.warning("Dynamic geocoding failed. Falling back to Mysore Road coordinates.")
     return 12.9343, 77.5348
 
@@ -55,7 +56,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     
     client = get_gemini_client()
     
-    # 1. THE ESCAPE HATCH: Force Gemini to return "UNKNOWN" if no location exists
+    # Enhanced prompt requesting full high-resolution contextual data for our ML model
     prompt = f"""
     You are an intelligence extraction pipeline for the Bengaluru Traffic Police.
     Extract the event details from the following unstructured text.
@@ -65,32 +66,25 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     RULES:
     1. 'corridor' MUST be a specific location, neighborhood, or major road in Bengaluru mentioned in the text. IF NO SPECIFIC LOCATION IS MENTIONED, YOU MUST EXACTLY OUTPUT: "UNKNOWN".
     2. 'event_cause' MUST be one of: 'public_event', 'VIP_movement', 'protest', 'procession', 'construction', 'general_threat'.
-    3. 'expected_crowd' MUST be an integer. Guess based on the text context if not explicit.
+    3. 'expected_crowd' MUST be an integer. Estimate based on the context if not explicitly declared.
     4. 'hours_from_now' MUST be an integer representing when the event starts.
     5. 'duration_hours' MUST be an integer representing how long the event lasts.
-    
-    OUTPUT FORMAT: You must output ONLY a valid JSON object. No markdown, no backticks, no explanations.
-    {{
-        "corridor": "string",
-        "event_cause": "string",
-        "expected_crowd": integer,
-        "hours_from_now": integer,
-        "duration_hours": integer
-    }}
+    6. 'police_station' MUST be the localized jurisdiction if mentioned, otherwise "unknown".
+    7. 'veh_type' MUST be any vehicle context involved (e.g., 'bus', 'heavy vehicle'), otherwise "unknown".
+    8. 'zone' MUST be the broader urban region (e.g., 'East Zone') if mentioned, otherwise "unknown".
     """
     
     try:
+        # Utilizing native response_mime_type to guarantee a perfectly valid JSON output
         response = await client.aio.models.generate_content(
             model='gemini-3.5-flash',
-            contents=prompt
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
-        raw_output = response.text.strip()
-        if raw_output.startswith("```json"): 
-            raw_output = raw_output[7:-3]
-        elif raw_output.startswith("```"): 
-            raw_output = raw_output[3:-3]
-            
-        extracted_data = json.loads(raw_output.strip())
+        
+        extracted_data = json.loads(response.text.strip())
         logger.info(f"OSINT Extraction successful: {extracted_data}")
         
     except Exception as e:
@@ -99,11 +93,11 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
 
     corridor_name = extracted_data.get("corridor", "UNKNOWN")
 
-    # 2. THE GEOCODE BYPASS: Handle "UNKNOWN" locations gracefully
+    # Handle "UNKNOWN" locations gracefully
     if corridor_name == "UNKNOWN":
         logger.info("No specific location detected in OSINT. Flagging as City-Wide Alert.")
         lat, lon = 12.9716, 77.5946  # Geographic center of Bengaluru
-        ui_action = "SOFT_ALERT"     # Tells React NOT to snap the camera or draw barricades
+        ui_action = "SOFT_ALERT"     
         alert_message = f"City-wide {extracted_data['event_cause']} detected via {source}. Awaiting location telemetry."
     else:
         # It has a location, proceed with MapmyIndia
@@ -111,25 +105,37 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         ui_action = "TRIGGER_SIREN_AND_SNAP_MAP"
         alert_message = f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required."
     
-    # 3. Calculate Dates and Forecast
+    # Calculate Dates
     start_time = datetime.now() + timedelta(hours=extracted_data.get("hours_from_now", 24))
     end_time = start_time + timedelta(hours=extracted_data.get("duration_hours", 4))
     
     try:
+        # FIXED: High-Resolution parameter passthrough implemented to fully inform the LightGBM classifiers
         forecast = await predict(
             event_cause=extracted_data["event_cause"],
             corridor=corridor_name,
             hour_of_day=start_time.hour,
-            day_of_week=start_time.weekday()
+            day_of_week=start_time.weekday(),
+            police_station=extracted_data.get("police_station", "unknown"),
+            veh_type=extracted_data.get("veh_type", "unknown"),
+            zone=extracted_data.get("zone", "unknown"),
+            latitude=lat,
+            longitude=lon
         )
-        predicted_risk = forecast["compound_risk_score"]
+        predicted_risk = forecast.get("compound_risk_score", 0.5)
     except Exception as e:
         logger.error(f"Impact Forecaster failed: {e}")
         predicted_risk = 0.5
+        # FIXED: Added fallback data structure to prevent UnboundLocalError / KeyError downstream during alert building
+        forecast = {
+            "compound_risk_score": 0.5,
+            "risk_level": "Medium",
+            "closure_probability": 0.35
+        }
 
     dynamic_z_score = round(predicted_risk * 3.5, 2)
     
-    # 4. Only register to Learning Engine if we actually have a corridor
+    # Only register to Learning Engine if we actually have a valid corridor targeting infrastructure updates
     event_id = f"OSINT-{uuid.uuid4().hex[:6].upper()}"
     reg_message = "Event logged as city-wide. Not added to corridor learning engine."
     
@@ -146,7 +152,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         except Exception as e:
             logger.error(f"Failed to register OSINT event: {e}")
 
-    # 5. Broadcast to React
+    # Broadcast to active React dashboards via WebSocket singletons
     alert_payload = {
         "type": "CRITICAL_ALERT",
         "timestamp": datetime.now().isoformat(),
@@ -158,7 +164,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         "risk_level": forecast["risk_level"],
         "predicted_closure_probability": forecast["closure_probability"],
         "message": alert_message,
-        "ui_action": ui_action # Drives the Frontend logic
+        "ui_action": ui_action 
     }
     
     await notifier.broadcast_alert(alert_payload)

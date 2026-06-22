@@ -2,6 +2,7 @@
 BTP Event Intelligence Platform — FastAPI entry point.
 Boots the data foundation, trains the ML forecaster, and exposes all operational endpoints.
 """
+import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -55,17 +56,28 @@ async def lifespan(app: FastAPI):
     df_status = await data_foundation_service.initialize_data_foundation()
     logger.info(f"Data foundation: {df_status}")
     
-    # ─── IMPACT FORECASTER INITIALIZATION ───
-    # Force fresh training on startup to clear out any stale or placeholder Git files
-    logger.info("Training and pre-loading fresh Impact Forecaster models...")
-    try:
-        metrics = await forecaster_trainer.train_and_save()
-        
-        # Load the newly trained models directly into RAM immediately to prevent mid-request crashes
-        forecaster_service.reload_models()
-        logger.info(f"🚀 Impact Forecaster fully armed and loaded into memory: {metrics}")
-    except Exception as e:
-        logger.error(f"❌ Critical failure during startup model training: {e}")
+    # ─── CACHED IMPACT FORECASTER INITIALIZATION ───
+    # PRODUCTION SCALE FIX: Check if model directory exists and contains files to prevent retraining loops
+    model_dir = os.path.join("data", "models")
+    models_cached = os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0
+    
+    if not models_cached:
+        logger.info("⚠️ No cached weights found. Training fresh Impact Forecaster models...")
+        try:
+            metrics = await forecaster_trainer.train_and_save()
+            forecaster_service.reload_models()
+            logger.info(f"🚀 Impact Forecaster fully armed and loaded into memory: {metrics}")
+        except Exception as e:
+            logger.error(f"❌ Critical failure during startup model training: {e}")
+    else:
+        logger.info("🎯 Found existing trained models on disk. Skipping training phase to pull from cache...")
+        try:
+            forecaster_service.reload_models()
+            logger.info("🚀 Impact Forecaster models hot-swapped from cache successfully.")
+        except Exception as e:
+            logger.error(f"❌ Failed to load cached models, retrying fresh train fallback: {e}")
+            metrics = await forecaster_trainer.train_and_save()
+            forecaster_service.reload_models()
         
     # --- DEMO OPTIMIZATION: Faster Daemons for Live Presentation ---
     scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15) # Sped up for demo

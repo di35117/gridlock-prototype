@@ -1,17 +1,19 @@
 """
 Learning Engine Service.
 Processes post-event feedback to autonomously update calibration factors
-using an Exponential Moving Average (EMA). Now utilizes MapmyIndia APIs
+using an Exponential Moving Average (EMA). Utilizes MapmyIndia APIs
 for enterprise-grade ground-truth traffic data.
 """
 import logging
 import random
 import json
+import asyncio
 import aiohttp
 from datetime import datetime
 import redis.asyncio as redis
 
-from config import REDIS_URL, MAPMYINDIA_STATIC_KEY
+# PRODUCTION FIX: Import FRONTEND_URL for secure whitelisting and DEMO_MODE for central configuration
+from config import REDIS_URL, MAPMYINDIA_STATIC_KEY, FRONTEND_URL, DEMO_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -34,31 +36,58 @@ async def register_active_event(event_id: str, corridor: str, event_cause: str, 
 
 async def poll_live_congestion(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float, is_demo_mode: bool) -> float:
     """
-    Enterprise Integration: Polls MapmyIndia Distance Matrix API to calculate 
-    real-time traffic congestion ratios using a sovereign Indian map engine.
+    Enterprise Integration: Polls MapmyIndia Distance Matrix and Distance Matrix ETA APIs
+    to compute an exact, live congestion ratio (Traffic Duration / Free-Flow Duration).
     """
     if is_demo_mode:
         logger.info("[DEMO MODE] Simulating live traffic data...")
         return random.uniform(1.3, 2.0)
         
-    logger.info(f"Polling MapmyIndia Distance Matrix API for true traffic ratio...")
-    url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/distance_matrix/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
+    logger.info("Polling MapmyIndia Distance Matrix endpoints for true traffic ratio...")
+    
+    coords = f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
+    # Baseline free-flow endpoint
+    base_url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/distance_matrix/driving/{coords}"
+    # Live traffic-aware endpoint
+    eta_url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/distance_matrix_eta/driving/{coords}"
+    
+    # PRODUCTION FIX: Enforce security domain verification and network connection limits
+    headers = {
+        "Referer": FRONTEND_URL
+    }
+    timeout = aiohttp.ClientTimeout(total=5) # Fail-fast threshold for background tasks
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # Calculate real-world traffic delay
-                    normal_time = data['results']['durations'][0][1]
-                    traffic_time = normal_time * 1.5 # Simulated enterprise traffic layer 
-                    return traffic_time / normal_time
-                else:
-                    logger.warning(f"MapmyIndia API returned status {response.status}. Falling back to baseline.")
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # 1. Fetch free-flow baseline duration
+            async with session.get(base_url, headers=headers) as resp_base:
+                if resp_base.status != 200:
+                    logger.warning(f"MapmyIndia Base Matrix failed with status {resp_base.status}.")
+                    return 1.0
+                base_data = await resp_base.json()
+                
+            # 2. Fetch live traffic duration
+            async with session.get(eta_url, headers=headers) as resp_eta:
+                if resp_eta.status != 200:
+                    logger.warning(f"MapmyIndia Traffic Matrix (ETA) failed with status {resp_eta.status}.")
+                    return 1.0
+                eta_data = await resp_eta.json()
+            
+            # MapmyIndia response layout maps source-to-destination to results['durations'][0][1]
+            normal_time = float(base_data['results']['durations'][0][1])
+            traffic_time = float(eta_data['results']['durations'][0][1])
+            
+            if normal_time > 0:
+                congestion_ratio = traffic_time / normal_time
+                logger.info(f"[Learning Engine] Successfully gathered ground-truth congestion ratio: {congestion_ratio:.2f}")
+                return congestion_ratio
+                
+    except asyncio.TimeoutError:
+        logger.error("MapmyIndia Distance Matrix request timed out.")
     except Exception as e:
         logger.error(f"MapmyIndia API Error: {e}")
         
-    return 1.0 # Safe fallback
+    return 1.0 # Safe fallback (implies standard free-flow traffic)
 
 async def process_learning_feedback(corridor: str, event_cause: str, predicted_risk: float, observed_ratio: float = None, is_demo_mode: bool = False) -> dict:
     """The EMA Math engine. Calculates new multiplier and permanently saves to Redis."""
@@ -104,24 +133,29 @@ async def autonomous_event_learning_scan():
     """Finds events that have ended, runs the learning loop, and purges the active record."""
     logger.info("[LEARNING DAEMON] Scanning for completed events...")
     
-    keys = await redis_client.keys("active_event:*")
-    now = datetime.now()
-    
-    for key in keys:
-        event_data_str = await redis_client.get(key)
-        if not event_data_str:
-            continue
-            
-        event_data = json.loads(event_data_str)
-        end_time = datetime.fromisoformat(event_data["expected_end_time"])
+    try:
+        keys = await redis_client.keys("active_event:*")
+        now = datetime.now()
         
-        if now >= end_time:
-            logger.info(f"[AUTONOMOUS LEARNING] Event {key} concluded. Initiating MapmyIndia poll & EMA update...")
-            await process_learning_feedback(
-                corridor=event_data["corridor"],
-                event_cause=event_data["event_cause"],
-                predicted_risk=event_data["predicted_risk"],
-                observed_ratio=None, 
-                is_demo_mode=True 
-            )
-            await redis_client.delete(key)
+        for key in keys:
+            event_data_str = await redis_client.get(key)
+            if not event_data_str:
+                continue
+                
+            event_data = json.loads(event_data_str)
+            end_time = datetime.fromisoformat(event_data["expected_end_time"])
+            
+            if now >= end_time:
+                logger.info(f"[AUTONOMOUS LEARNING] Event {key} concluded. Initiating MapmyIndia poll & EMA update...")
+                
+                # PRODUCTION FIX: Swapped hardcoded True with global configuration variable
+                await process_learning_feedback(
+                    corridor=event_data["corridor"],
+                    event_cause=event_data["event_cause"],
+                    predicted_risk=event_data["predicted_risk"],
+                    observed_ratio=None, 
+                    is_demo_mode=DEMO_MODE 
+                )
+                await redis_client.delete(key)
+    except Exception as daemon_err:
+        logger.error(f"[LEARNING DAEMON] Internal scan iteration failed: {daemon_err}")

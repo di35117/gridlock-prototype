@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
-import { mappls, mappls_map } from "mappls-web-maps";
+import { mappls } from "mappls-web-maps";
 import { useSystemStore } from "../store/useSystemStore";
 import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
-// Global reference hook so CustomMapMarker can access the instance safely outside the render cycle
+// 1. Initialize the Mappls Class Object globally for the component
+const mapplsClassObject = new mappls();
+
 let sharedMapInstance = null;
 
 export default function BengaluruMap() {
@@ -19,10 +21,10 @@ export default function BengaluruMap() {
   } = useSystemStore();
 
   const [isMapLoading, setIsMapLoading] = useState(true);
-  const [mapRenderTrigger, setMapRenderTrigger] = useState(0); // Safely triggers marker recalculations
+  const [mapRenderTrigger, setMapRenderTrigger] = useState(0);
   const mapRef = useRef(null);
 
-  // 1. Fetch initial road metrics
+  // Fetch initial road metrics
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -38,7 +40,7 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // 2. Initialize the MapmyIndia SDK
+  // 2. Correct NPM Package Initialization
   useEffect(() => {
     if (!MAPMYINDIA_TOKEN) {
       console.error(
@@ -47,21 +49,25 @@ export default function BengaluruMap() {
       return;
     }
 
-    mappls.initialize(MAPMYINDIA_TOKEN, () => {
-      const mapObject = mappls_map({
+    // Pass { map: true } to load the core map library
+    mapplsClassObject.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
+      // Use the class method .Map() and nest settings inside 'properties'
+      const mapObject = mapplsClassObject.Map({
         id: "mapmyindia-container",
-        center: [12.9716, 77.5946],
-        zoom: 12.5,
-        theme: "dark",
-        zoomControl: true,
-        location: true,
+        properties: {
+          center: [12.9716, 77.5946],
+          zoom: 12.5,
+          theme: "dark",
+          zoomControl: true,
+          location: true,
+        },
       });
 
       mapObject.on("load", () => {
         mapRef.current = mapObject;
         sharedMapInstance = mapObject;
         setIsMapLoading(false);
-        setMapRenderTrigger((prev) => prev + 1); // Signal markers that map is ready
+        setMapRenderTrigger((prev) => prev + 1);
       });
     });
 
@@ -71,7 +77,7 @@ export default function BengaluruMap() {
     };
   }, []);
 
-  // 3. Cinematic Camera Sweeps for Active Surges
+  // Cinematic Camera Sweeps
   useEffect(() => {
     if (activeSurge && mapRef.current && !isMapLoading) {
       mapRef.current.flyTo({
@@ -87,7 +93,7 @@ export default function BengaluruMap() {
     }
   }, [activeSurge, isMapLoading]);
 
-  // 4. Map Data Layers (Roads, Diversions, Heatmaps)
+  // Map Data Layers (Roads, Diversions, Heatmaps)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || isMapLoading) return;
@@ -238,8 +244,7 @@ export default function BengaluruMap() {
         className="absolute inset-0 w-full h-full"
       />
 
-      {/* --- FIXED DOM MARKERS OVERLAY --- */}
-      {/* 1. Incident Ground-Zero Pulse */}
+      {/* FIXED DOM MARKERS OVERLAY */}
       {!isMapLoading && activeSurge && (
         <CustomMapMarker
           mapTrigger={mapRenderTrigger}
@@ -255,7 +260,6 @@ export default function BengaluruMap() {
         </CustomMapMarker>
       )}
 
-      {/* 2. Tactical Barricades Overlay */}
       {!isMapLoading &&
         barricades &&
         barricades.map((coord, idx) => (
@@ -280,14 +284,11 @@ export default function BengaluruMap() {
   );
 }
 
-// -----------------------------------------------------------------
-// Helper Component: Safe projection calculation without passing raw ref values during render
-// -----------------------------------------------------------------
+// Custom Map Marker Helper
 function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
   useEffect(() => {
-    // Read the instance from our module-scoped helper safely inside the effect hook
     const map = sharedMapInstance;
     if (!map) return;
 

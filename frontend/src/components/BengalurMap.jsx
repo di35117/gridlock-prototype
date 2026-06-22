@@ -5,10 +5,6 @@ import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
-// 1. Initialize the Mappls Class Object globally
-const mapplsClassObject = new mappls();
-let sharedMapInstance = null;
-
 export default function BengaluruMap() {
   const {
     roadMetrics,
@@ -20,17 +16,16 @@ export default function BengaluruMap() {
   } = useSystemStore();
 
   const [isMapLoading, setIsMapLoading] = useState(true);
-  const [mapRenderTrigger, setMapRenderTrigger] = useState(0);
-  const mapRef = useRef(null);
+  const [mapInstance, setMapInstance] = useState(null); // Tracks active map cleanly across renders
+  const initializationRef = useRef(false); // Protects against React 18 double execution
 
-  // --- FIX 1: Robust Network Fetching ---
+  // 1. Robust Backend Network Fetching
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
         let rawUrl =
           import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-        // Ensure absolute URL to prevent fetching Vercel 404 HTML pages
         if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = `https://${rawUrl}`;
         }
@@ -38,7 +33,6 @@ export default function BengaluruMap() {
         const endpoint = `${rawUrl}/api/routing/network/metrics`;
         const res = await fetch(endpoint);
 
-        // Prevent "Unexpected token T" JSON parsing errors
         if (!res.ok) {
           throw new Error(`Server rejected request with status: ${res.status}`);
         }
@@ -52,7 +46,7 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // --- FIX 2: Correct Mappls SDK Initialization ---
+  // 2. Safe, Isolated Mappls SDK Initialization
   useEffect(() => {
     if (!MAPMYINDIA_TOKEN) {
       console.error(
@@ -61,16 +55,20 @@ export default function BengaluruMap() {
       return;
     }
 
-    mapplsClassObject.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
-      // Clear any existing map instance if React StrictMode fires twice
-      if (mapRef.current) {
-        mapRef.current.remove();
-      }
+    if (initializationRef.current) return;
+    initializationRef.current = true;
 
-      const mapObject = mapplsClassObject.Map({
+    const mapplsSdk = new mappls();
+
+    mapplsSdk.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
+      // Safety guard to ensure target DOM element is mounted
+      if (!document.getElementById("mapmyindia-container")) return;
+
+      const mapObject = mapplsSdk.Map({
         id: "mapmyindia-container",
         properties: {
-          center: [12.9716, 77.5946], // MapmyIndia core uses [Lat, Lng] here
+          // ⚠️ FIXED: MapmyIndia vector engine strictly uses standard GeoJSON [Longitude, Latitude]
+          center: [77.5946, 12.9716],
           zoom: 12.5,
           theme: "dark",
           zoomControl: true,
@@ -78,24 +76,29 @@ export default function BengaluruMap() {
         },
       });
 
+      // Catch silent vector layout errors
+      mapObject.on("error", (e) => {
+        console.error("MapmyIndia Vector Engine Error:", e);
+      });
+
       mapObject.on("load", () => {
-        mapRef.current = mapObject;
-        sharedMapInstance = mapObject;
+        setMapInstance(mapObject);
         setIsMapLoading(false);
-        setMapRenderTrigger((prev) => prev + 1);
       });
     });
 
     return () => {
-      if (mapRef.current) mapRef.current.remove();
-      sharedMapInstance = null;
+      if (mapInstance) {
+        mapInstance.remove();
+      }
+      initializationRef.current = false;
     };
   }, []);
 
-  // Cinematic Camera Sweeps
+  // 3. Cinematic Camera Sweeps upon Emergency Events
   useEffect(() => {
-    if (activeSurge && mapRef.current && !isMapLoading) {
-      mapRef.current.flyTo({
+    if (activeSurge && mapInstance && !isMapLoading) {
+      mapInstance.flyTo({
         center: [
           activeSurge.longitude || 77.5383,
           activeSurge.latitude || 12.9562,
@@ -106,23 +109,22 @@ export default function BengaluruMap() {
         duration: 2500,
       });
     }
-  }, [activeSurge, isMapLoading]);
+  }, [activeSurge, mapInstance, isMapLoading]);
 
-  // Map Data Layers (Roads, Diversions, Heatmaps)
+  // 4. Map Data Layers (Road Vectors, Diversions, Heatmaps)
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || isMapLoading) return;
+    if (!mapInstance || isMapLoading) return;
 
     // --- A. THERMAL ROAD HEATMAP ---
     if (roadMetrics) {
-      if (map.getSource("bengaluru-roads")) {
-        map.getSource("bengaluru-roads").setData(roadMetrics);
+      if (mapInstance.getSource("bengaluru-roads")) {
+        mapInstance.getSource("bengaluru-roads").setData(roadMetrics);
       } else {
-        map.addSource("bengaluru-roads", {
+        mapInstance.addSource("bengaluru-roads", {
           type: "geojson",
           data: roadMetrics,
         });
-        map.addLayer({
+        mapInstance.addLayer({
           id: "thermal-heat-layer",
           type: "line",
           source: "bengaluru-roads",
@@ -151,11 +153,14 @@ export default function BengaluruMap() {
 
     // --- B. AI TACTICAL DIVERSION ROUTES ---
     if (diversions) {
-      if (map.getSource("ai-diversions")) {
-        map.getSource("ai-diversions").setData(diversions);
+      if (mapInstance.getSource("ai-diversions")) {
+        mapInstance.getSource("ai-diversions").setData(diversions);
       } else {
-        map.addSource("ai-diversions", { type: "geojson", data: diversions });
-        map.addLayer({
+        mapInstance.addSource("ai-diversions", {
+          type: "geojson",
+          data: diversions,
+        });
+        mapInstance.addLayer({
           id: "ai-route",
           type: "line",
           source: "ai-diversions",
@@ -168,8 +173,9 @@ export default function BengaluruMap() {
         });
       }
     } else {
-      if (map.getLayer("ai-route")) map.removeLayer("ai-route");
-      if (map.getSource("ai-diversions")) map.removeSource("ai-diversions");
+      if (mapInstance.getLayer("ai-route")) mapInstance.removeLayer("ai-route");
+      if (mapInstance.getSource("ai-diversions"))
+        mapInstance.removeSource("ai-diversions");
     }
 
     // --- C. BREATHING INCIDENT HEATMAP ---
@@ -194,11 +200,14 @@ export default function BengaluruMap() {
         ],
       };
 
-      if (map.getSource("surge-heatmap")) {
-        map.getSource("surge-heatmap").setData(heatmapData);
+      if (mapInstance.getSource("surge-heatmap")) {
+        mapInstance.getSource("surge-heatmap").setData(heatmapData);
       } else {
-        map.addSource("surge-heatmap", { type: "geojson", data: heatmapData });
-        map.addLayer({
+        mapInstance.addSource("surge-heatmap", {
+          type: "geojson",
+          data: heatmapData,
+        });
+        mapInstance.addLayer({
           id: "surge-heatmap-layer",
           type: "heatmap",
           source: "surge-heatmap",
@@ -237,11 +246,19 @@ export default function BengaluruMap() {
         });
       }
     } else {
-      if (map.getLayer("surge-heatmap-layer"))
-        map.removeLayer("surge-heatmap-layer");
-      if (map.getSource("surge-heatmap")) map.removeSource("surge-heatmap");
+      if (mapInstance.getLayer("surge-heatmap-layer"))
+        mapInstance.removeLayer("surge-heatmap-layer");
+      if (mapInstance.getSource("surge-heatmap"))
+        mapInstance.removeSource("surge-heatmap");
     }
-  }, [roadMetrics, diversions, activeSurge, isProcessing, isMapLoading]);
+  }, [
+    roadMetrics,
+    diversions,
+    activeSurge,
+    isProcessing,
+    mapInstance,
+    isMapLoading,
+  ]);
 
   return (
     <div className="w-full h-full relative bg-gray-950 overflow-hidden">
@@ -254,16 +271,15 @@ export default function BengaluruMap() {
         </div>
       )}
 
-      {/* The DOM ID must exactly match the initialization string */}
       <div
         id="mapmyindia-container"
         className="absolute inset-0 w-full h-full"
       />
 
-      {/* FIXED DOM MARKERS OVERLAY */}
-      {!isMapLoading && activeSurge && (
+      {/* EMERGENCY SURGE PIN MARKER */}
+      {!isMapLoading && mapInstance && activeSurge && (
         <CustomMapMarker
-          mapTrigger={mapRenderTrigger}
+          map={mapInstance}
           longitude={activeSurge.longitude || 77.5383}
           latitude={activeSurge.latitude || 12.9562}
         >
@@ -276,12 +292,14 @@ export default function BengaluruMap() {
         </CustomMapMarker>
       )}
 
+      {/* DYNAMIC BARRICADE MARKERS */}
       {!isMapLoading &&
+        mapInstance &&
         barricades &&
         barricades.map((coord, idx) => (
           <CustomMapMarker
             key={`barricade-${idx}`}
-            mapTrigger={mapRenderTrigger}
+            map={mapInstance}
             longitude={coord[0]}
             latitude={coord[1]}
           >
@@ -300,16 +318,14 @@ export default function BengaluruMap() {
   );
 }
 
-// --- FIX 3: Bulletproof Map Marker Helper ---
-function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
+// 5. Bulletproof Screen Projection Anchor Component
+function CustomMapMarker({ map, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
   useEffect(() => {
-    const map = sharedMapInstance;
     if (!map) return;
 
     const updatePosition = () => {
-      // Safety guard against bad backend data
       if (
         longitude == null ||
         latitude == null ||
@@ -321,12 +337,11 @@ function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
 
       try {
         const pos = map.project([longitude, latitude]);
-        // Strict check to prevent TypeError: Cannot read properties of undefined
         if (pos && pos.x !== undefined && pos.y !== undefined) {
           setPosition({ x: pos.x, y: pos.y });
         }
       } catch (err) {
-        console.warn("Map projection calculation delayed...", err);
+        // Suppress quiet frame layout delays during initialization fly-ins
       }
     };
 
@@ -338,7 +353,7 @@ function CustomMapMarker({ mapTrigger, longitude, latitude, children }) {
       map.off("move", updatePosition);
       map.off("zoom", updatePosition);
     };
-  }, [mapTrigger, longitude, latitude]);
+  }, [map, longitude, latitude]);
 
   return (
     <div

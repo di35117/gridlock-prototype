@@ -4,9 +4,21 @@ import { useSystemStore } from "../store/useSystemStore";
 // Pulls from Vercel in production, or defaults to localhost in development
 const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+// DEFENSIVE FIX: If the protocol is missing from the env variable, patch it manually
+let absoluteApiUrl = API_URL;
+if (
+  !absoluteApiUrl.startsWith("http://") &&
+  !absoluteApiUrl.startsWith("https://")
+) {
+  absoluteApiUrl =
+    absoluteApiUrl.includes("localhost") || absoluteApiUrl.includes("127.0.0.1")
+      ? `http://${absoluteApiUrl}`
+      : `https://${absoluteApiUrl}`;
+}
+
 // Magically swaps https:// for wss:// and http:// for ws://
 const WS_URL =
-  API_URL.replace("https://", "wss://").replace("http://", "ws://") +
+  absoluteApiUrl.replace("https://", "wss://").replace("http://", "ws://") +
   "/api/stream/live";
 
 let ws = null;
@@ -36,69 +48,36 @@ export const connectSystemWebSocket = () => {
         store.triggerSurgeResponse(data.payload || data);
 
         try {
-          // Extract coordinate items cleanly from live event stream payload structures
-          const eventLat = data.payload?.latitude || data.latitude || 12.9716;
-          const eventLon = data.payload?.longitude || data.longitude || 77.5946;
+          const API_BASE =
+            import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+          const res = await fetch(`${API_BASE}/api/copilot/execute`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event_id: data.id || data.event_id }),
+          });
+          const executionData = await res.json();
 
-          // Dispatch generation request containing accurate telemetry data coordinates
-          const initialResponse = await fetch(
-            `${API_URL}/api/copilot/generate`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                event_cause: data.type,
-                corridor:
-                  data.corridor || (data.payload ? data.payload.corridor : ""),
-                expected_crowd: data.payload?.expected_crowd || 1000,
-                event_details: data.message || data.payload?.message || "",
-                event_datetime: new Date().toISOString(),
-                latitude: parseFloat(eventLat),
-                longitude: parseFloat(eventLon),
-              }),
-            },
-          );
-
-          const initialData = await initialResponse.json();
-          const task_id = initialData.task_id;
-
-          if (!task_id) {
-            console.error(
-              "Failed to acquire tracking task identifier from Copilot engine backend.",
-            );
-            return;
-          }
-
-          // Initialize state check interval polling loop
-          const pollInterval = setInterval(async () => {
+          let pollInterval = setInterval(async () => {
             try {
-              const statusResponse = await fetch(
-                `${API_URL}/api/copilot/status/${task_id}`,
+              const statusRes = await fetch(
+                `${API_BASE}/api/copilot/status/${executionData.task_id}`,
               );
-              const statusData = await statusResponse.json();
+              const statusData = await statusRes.json();
 
               if (statusData.status === "completed") {
                 clearInterval(pollInterval);
 
-                // Read barricades list or establish clear algorithmic boundaries around localized threat
-                let finalBarricades = statusData.barricades || [];
-                if (finalBarricades.length === 0 && store.activeSurge) {
-                  const lat = store.activeSurge.latitude || 12.9716;
-                  const lon = store.activeSurge.longitude || 77.5946;
-                  finalBarricades = [
-                    [lon + 0.002, lat + 0.002],
-                    [lon - 0.002, lat - 0.002],
-                    [lon + 0.002, lat - 0.002],
-                  ];
+                let finalBarricades = [];
+                if (statusData.barricades) {
+                  finalBarricades = Object.values(statusData.barricades);
                 }
 
-                // Push completed state payloads directly into state storage hooks
                 store.resolveSurgeResponse(
                   statusData.operational_order,
                   finalBarricades,
                   statusData.diversion_routes || null,
-                  statusData.resources || null, // Feeds the Resource Dashboard
-                  statusData.compound_threats || null, // Feeds the Conflict Radar
+                  statusData.resources || null,
+                  statusData.compound_threats || null,
                 );
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);

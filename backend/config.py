@@ -12,15 +12,13 @@ REDIS_URL             = os.getenv("REDIS_URL", "redis://localhost:6379")
 GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY   = os.getenv("GOOGLE_MAPS_API_KEY", "")
 SECRET_KEY            = os.getenv("SECRET_KEY", "btp_dev_secret_2026")
-MAPMYINDIA_STATIC_KEY = os.getenv("MAPMYINDIA_STATIC_KEY", "")
 
-# FIX: The data folder is now INSIDE the backend folder (BASE_DIR)
+# --- MapmyIndia Enterprise Credentials ---
+MAPMYINDIA_STATIC_KEY    = os.getenv("MAPMYINDIA_STATIC_KEY", "")
+MAPMYINDIA_CLIENT_ID     = os.getenv("MAPMYINDIA_CLIENT_ID", "")
+MAPMYINDIA_CLIENT_SECRET = os.getenv("MAPMYINDIA_CLIENT_SECRET", "")
+
 # We safely construct absolute paths so Docker/Railway can always find them.
-BENGALURU_GRAPH_CACHE = os.getenv(
-    "BENGALURU_GRAPH_CACHE",
-    str(BASE_DIR / "data" / "bengaluru_road_graph.pkl")
-)
-
 DATA_PATH = os.getenv(
     "DATA_PATH", 
     str(BASE_DIR / "data" / "astram_events.csv")

@@ -16,10 +16,10 @@ export default function BengaluruMap() {
   } = useSystemStore();
 
   const [isMapLoading, setIsMapLoading] = useState(true);
-  const [mapInstance, setMapInstance] = useState(null); // Tracks active map cleanly across renders
-  const initializationRef = useRef(false); // Protects against React 18 double execution
+  const [mapInstance, setMapInstance] = useState(null);
+  const initializationRef = useRef(false);
 
-  // 1. Robust Backend Network Fetching
+  // 1. Fetch live metrics from your routing backend
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -46,7 +46,7 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // 2. Safe, Isolated Mappls SDK Initialization
+  // 2. Verified Mappls SDK Initializer Block
   useEffect(() => {
     if (!MAPMYINDIA_TOKEN) {
       console.error(
@@ -60,25 +60,25 @@ export default function BengaluruMap() {
 
     const mapplsSdk = new mappls();
 
-    mapplsSdk.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
-      // Safety guard to ensure target DOM element is mounted
+    // Fix: Structured load object to prevent internal library parsing exceptions
+    const loadOptions = {
+      libraries: [],
+      plugins: [],
+    };
+
+    mapplsSdk.initialize(MAPMYINDIA_TOKEN, loadOptions, () => {
       if (!document.getElementById("mapmyindia-container")) return;
 
       const mapObject = mapplsSdk.Map({
         id: "mapmyindia-container",
         properties: {
-          // ⚠️ FIXED: MapmyIndia vector engine strictly uses standard GeoJSON [Longitude, Latitude]
-          center: [77.5946, 12.9716],
+          // Note: The main center property array in mappls-web-maps uses [Latitude, Longitude]
+          center: [12.9716, 77.5946],
           zoom: 12.5,
           theme: "dark",
           zoomControl: true,
           location: true,
         },
-      });
-
-      // Catch silent vector layout errors
-      mapObject.on("error", (e) => {
-        console.error("MapmyIndia Vector Engine Error:", e);
       });
 
       mapObject.on("load", () => {
@@ -95,7 +95,7 @@ export default function BengaluruMap() {
     };
   }, []);
 
-  // 3. Cinematic Camera Sweeps upon Emergency Events
+  // 3. Automated camera framing for emergency events
   useEffect(() => {
     if (activeSurge && mapInstance && !isMapLoading) {
       mapInstance.flyTo({
@@ -111,7 +111,7 @@ export default function BengaluruMap() {
     }
   }, [activeSurge, mapInstance, isMapLoading]);
 
-  // 4. Map Data Layers (Road Vectors, Diversions, Heatmaps)
+  // 4. Vector Map Data Overlay Subsystems
   useEffect(() => {
     if (!mapInstance || isMapLoading) return;
 
@@ -178,7 +178,7 @@ export default function BengaluruMap() {
         mapInstance.removeSource("ai-diversions");
     }
 
-    // --- C. BREATHING INCIDENT HEATMAP ---
+    // --- C. EMERGENCY INCIDENT HEATMAP LAYER ---
     if (activeSurge && activeSurge.status !== "resolved") {
       const intensity = activeSurge.z_score
         ? Math.min(activeSurge.z_score / 2, 1)
@@ -271,12 +271,13 @@ export default function BengaluruMap() {
         </div>
       )}
 
+      {/* Target rendering canvas container */}
       <div
         id="mapmyindia-container"
         className="absolute inset-0 w-full h-full"
       />
 
-      {/* EMERGENCY SURGE PIN MARKER */}
+      {/* TACTICAL EMERGENCY PIN */}
       {!isMapLoading && mapInstance && activeSurge && (
         <CustomMapMarker
           map={mapInstance}
@@ -292,7 +293,7 @@ export default function BengaluruMap() {
         </CustomMapMarker>
       )}
 
-      {/* DYNAMIC BARRICADE MARKERS */}
+      {/* TACTICAL ROAD BARRICADES */}
       {!isMapLoading &&
         mapInstance &&
         barricades &&
@@ -318,7 +319,7 @@ export default function BengaluruMap() {
   );
 }
 
-// 5. Bulletproof Screen Projection Anchor Component
+// 5. Dynamic Screen Projection Synchronizer for Custom DOM Components
 function CustomMapMarker({ map, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
@@ -336,12 +337,13 @@ function CustomMapMarker({ map, longitude, latitude, children }) {
       }
 
       try {
+        // Map projection expects [Longitude, Latitude]
         const pos = map.project([longitude, latitude]);
         if (pos && pos.x !== undefined && pos.y !== undefined) {
           setPosition({ x: pos.x, y: pos.y });
         }
       } catch (err) {
-        // Suppress quiet frame layout delays during initialization fly-ins
+        // Quietly absorb frame synchronization layout lags during zoom transitions
       }
     };
 

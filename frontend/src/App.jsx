@@ -2,6 +2,8 @@
 import React, { useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { Activity, Cpu } from "lucide-react";
+import { Analytics } from "@vercel/analytics/react"; // <-- VERCEL ANALYTICS IMPORT ADDED
+
 import BengaluruMap from "./components/BengalurMap.jsx";
 import LiveIntelFeed from "./components/LiveIntelFeed";
 import TacticalResourceDashboard from "./components/TacticalResourceDashboard";
@@ -18,6 +20,9 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 overflow-hidden font-sans">
+      {/* VERCEL ANALYTICS COMPONENT ADDED HERE */}
+      <Analytics />
+
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700 shadow-md z-10">
         <div className="flex items-center space-x-3">

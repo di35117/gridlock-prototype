@@ -12,7 +12,7 @@ from modules.ai_copilot.service import get_gemini_client
 from modules.impact_forecaster.service import predict
 from modules.learning_engine.service import register_active_event
 from modules.websockets.manager import notifier
-from config import MAPMYINDIA_STATIC_KEY
+from config import MAPMYINDIA_STATIC_KEY, FRONTEND_URL
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ async def geocode_location(location_name: str) -> tuple[float, float]:
     query = urllib.parse.quote(f"{location_name}, Bengaluru")
     url = f"[https://apis.mapmyindia.com/advancedmaps/v1/](https://apis.mapmyindia.com/advancedmaps/v1/){MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
     headers = {
-        "Referer": "http://localhost:5173"
+        "Referer": FRONTEND_URL
     }
     
     try:

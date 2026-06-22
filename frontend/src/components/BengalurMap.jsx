@@ -5,6 +5,9 @@ import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
+// 1. Initialize Mappls Class safely outside the component
+const mapplsClassObject = new mappls();
+
 export default function BengaluruMap() {
   const {
     roadMetrics,
@@ -17,36 +20,31 @@ export default function BengaluruMap() {
 
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapInstance, setMapInstance] = useState(null);
-  const initializationRef = useRef(false);
+  const mapContainerRef = useRef(null);
 
-  // 1. Fetch live metrics from your routing backend
+  // Fetch metrics if WebSocket hasn't already populated them
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
         let rawUrl =
           import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
         if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = `https://${rawUrl}`;
         }
-
         const endpoint = `${rawUrl}/api/routing/network/metrics`;
         const res = await fetch(endpoint);
-
-        if (!res.ok) {
-          throw new Error(`Server rejected request with status: ${res.status}`);
+        if (res.ok) {
+          const data = await res.json();
+          setRoadMetrics(data);
         }
-
-        const data = await res.json();
-        setRoadMetrics(data);
       } catch (err) {
-        console.error("Failed to load road metrics:", err.message);
+        console.warn("Fetch skipped/failed, relying on WebSocket data.");
       }
     };
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // 2. Verified Mappls SDK Initializer Block
+  // 2. The Bulletproof MapmyIndia Initializer
   useEffect(() => {
     if (!MAPMYINDIA_TOKEN) {
       console.error(
@@ -55,29 +53,28 @@ export default function BengaluruMap() {
       return;
     }
 
-    if (initializationRef.current) return;
-    initializationRef.current = true;
+    let mapObject = null;
+    let isCancelled = false; // Strict Mode Guard
 
-    const mapplsSdk = new mappls();
-
-    // Fix: Structured load object to prevent internal library parsing exceptions
+    // CRITICAL: `map: true` is mandatory to inject the actual map canvas
     const loadOptions = {
+      map: true,
       libraries: [],
       plugins: [],
     };
 
-    mapplsSdk.initialize(MAPMYINDIA_TOKEN, loadOptions, () => {
-      if (!document.getElementById("mapmyindia-container")) return;
+    mapplsClassObject.initialize(MAPMYINDIA_TOKEN, loadOptions, () => {
+      // If React unmounted this component before the Mappls script finished downloading, abort.
+      if (isCancelled || !mapContainerRef.current) return;
 
-      const mapObject = mapplsSdk.Map({
-        id: "mapmyindia-container",
+      mapObject = mapplsClassObject.Map({
+        id: mapContainerRef.current.id,
         properties: {
-          // Note: The main center property array in mappls-web-maps uses [Latitude, Longitude]
-          center: [12.9716, 77.5946],
+          center: [12.9716, 77.5946], // [Latitude, Longitude]
           zoom: 12.5,
           theme: "dark",
           zoomControl: true,
-          location: true,
+          // Removed 'location: true' to prevent browser GPS prompt from freezing initialization
         },
       });
 
@@ -85,17 +82,21 @@ export default function BengaluruMap() {
         setMapInstance(mapObject);
         setIsMapLoading(false);
       });
+
+      mapObject.on("error", (e) => {
+        console.error("MapmyIndia Graphics Engine Error:", e);
+      });
     });
 
     return () => {
-      if (mapInstance) {
-        mapInstance.remove();
+      isCancelled = true;
+      if (mapObject) {
+        mapObject.remove();
       }
-      initializationRef.current = false;
     };
   }, []);
 
-  // 3. Automated camera framing for emergency events
+  // 3. Cinematic Camera Sweeps upon Emergency Events
   useEffect(() => {
     if (activeSurge && mapInstance && !isMapLoading) {
       mapInstance.flyTo({
@@ -111,11 +112,10 @@ export default function BengaluruMap() {
     }
   }, [activeSurge, mapInstance, isMapLoading]);
 
-  // 4. Vector Map Data Overlay Subsystems
+  // 4. Map Data Layers Overlay logic
   useEffect(() => {
     if (!mapInstance || isMapLoading) return;
 
-    // --- A. THERMAL ROAD HEATMAP ---
     if (roadMetrics) {
       if (mapInstance.getSource("bengaluru-roads")) {
         mapInstance.getSource("bengaluru-roads").setData(roadMetrics);
@@ -131,7 +131,6 @@ export default function BengaluruMap() {
           filter: [">=", ["get", "risk_score"], 0.4],
           paint: {
             "line-width": ["interpolate", ["linear"], ["zoom"], 10, 15, 15, 40],
-            "line-blur": ["interpolate", ["linear"], ["zoom"], 10, 15, 15, 30],
             "line-opacity": 0.65,
             "line-color": [
               "interpolate",
@@ -151,7 +150,6 @@ export default function BengaluruMap() {
       }
     }
 
-    // --- B. AI TACTICAL DIVERSION ROUTES ---
     if (diversions) {
       if (mapInstance.getSource("ai-diversions")) {
         mapInstance.getSource("ai-diversions").setData(diversions);
@@ -178,7 +176,6 @@ export default function BengaluruMap() {
         mapInstance.removeSource("ai-diversions");
     }
 
-    // --- C. EMERGENCY INCIDENT HEATMAP LAYER ---
     if (activeSurge && activeSurge.status !== "resolved") {
       const intensity = activeSurge.z_score
         ? Math.min(activeSurge.z_score / 2, 1)
@@ -271,9 +268,10 @@ export default function BengaluruMap() {
         </div>
       )}
 
-      {/* Target rendering canvas container */}
+      {/* Linked via Ref instead of static ID to guarantee React DOM synchronization */}
       <div
         id="mapmyindia-container"
+        ref={mapContainerRef}
         className="absolute inset-0 w-full h-full"
       />
 
@@ -319,7 +317,7 @@ export default function BengaluruMap() {
   );
 }
 
-// 5. Dynamic Screen Projection Synchronizer for Custom DOM Components
+// 5. Dynamic Screen Projection Synchronizer
 function CustomMapMarker({ map, longitude, latitude, children }) {
   const [position, setPosition] = useState({ x: -1000, y: -1000 });
 
@@ -332,19 +330,15 @@ function CustomMapMarker({ map, longitude, latitude, children }) {
         latitude == null ||
         isNaN(longitude) ||
         isNaN(latitude)
-      ) {
+      )
         return;
-      }
 
       try {
-        // Map projection expects [Longitude, Latitude]
         const pos = map.project([longitude, latitude]);
         if (pos && pos.x !== undefined && pos.y !== undefined) {
           setPosition({ x: pos.x, y: pos.y });
         }
-      } catch (err) {
-        // Quietly absorb frame synchronization layout lags during zoom transitions
-      }
+      } catch (err) {}
     };
 
     updatePosition();

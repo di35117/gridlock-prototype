@@ -10,6 +10,9 @@ from fastapi.middleware.gzip import GZipMiddleware # NEW: GZip Optimization
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+# PRODUCTION SCALE FIX: Import the global HTTP pool to manage application connection lifecycle
+from http_client import http_pool
+
 load_dotenv()
 
 logging.basicConfig(
@@ -42,6 +45,11 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("━━━ BTP Event Intelligence — starting up ━━━")
+    
+    # PRODUCTION SCALE FIX: Warm up the persistent TCP sockets to MapmyIndia before everything else
+    logger.info("[STARTUP] Warming up global HTTP client connection pool...")
+    http_pool.start()
+    
     await init_db()
     logger.info("Database tables ready")
     
@@ -80,6 +88,10 @@ async def lifespan(app: FastAPI):
     
     logger.info("━━━ Shutting down ━━━")
     scheduler.shutdown()
+    
+    # PRODUCTION SCALE FIX: Tear down client session sockets to prevent Linux port leaks
+    logger.info("[SHUTDOWN] Closing global HTTP client connection pool cleanly...")
+    await http_pool.close()
 
 app = FastAPI(title="BTP Event Intelligence Platform", lifespan=lifespan)
 

@@ -1,3 +1,4 @@
+# backend/main.py
 """
 BTP Event Intelligence Platform — FastAPI entry point.
 Boots the data foundation, trains the ML forecaster, and exposes all operational endpoints.
@@ -7,11 +8,10 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware # NEW: GZip Optimization
+from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# PRODUCTION SCALE FIX: Import the global HTTP pool to manage application connection lifecycle
 from http_client import http_pool
 
 load_dotenv()
@@ -45,8 +45,6 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("━━━ BTP Event Intelligence — starting up ━━━")
-    
-    # PRODUCTION SCALE FIX: Warm up the persistent TCP sockets to MapmyIndia before everything else
     logger.info("[STARTUP] Warming up global HTTP client connection pool...")
     http_pool.start()
     
@@ -56,8 +54,6 @@ async def lifespan(app: FastAPI):
     df_status = await data_foundation_service.initialize_data_foundation()
     logger.info(f"Data foundation: {df_status}")
     
-    # ─── CACHED IMPACT FORECASTER INITIALIZATION ───
-    # PRODUCTION SCALE FIX: Check if model directory exists and contains files to prevent retraining loops
     model_dir = os.path.join("data", "models")
     models_cached = os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0
     
@@ -79,9 +75,8 @@ async def lifespan(app: FastAPI):
             metrics = await forecaster_trainer.train_and_save()
             forecaster_service.reload_models()
         
-    # --- DEMO OPTIMIZATION: Faster Daemons for Live Presentation ---
-    scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15) # Sped up for demo
-    scheduler.add_job(autonomous_event_learning_scan, 'interval', seconds=15) # Sped up for demo
+    scheduler.add_job(run_autonomous_surge_scan, 'interval', seconds=15)
+    scheduler.add_job(autonomous_event_learning_scan, 'interval', seconds=15)
     scheduler.start()
     logger.info("Autonomous Monitoring Daemons (APScheduler) started (15s intervals).")
         
@@ -90,17 +85,13 @@ async def lifespan(app: FastAPI):
     
     logger.info("━━━ Shutting down ━━━")
     scheduler.shutdown()
-    
-    # PRODUCTION SCALE FIX: Tear down client session sockets to prevent Linux port leaks
     logger.info("[SHUTDOWN] Closing global HTTP client connection pool cleanly...")
     await http_pool.close()
 
 app = FastAPI(title="BTP Event Intelligence Platform", lifespan=lifespan)
 
-# --- NEW: Global GZip Compression (Fixes Map Load Times) ---
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# CORS opened for seamless frontend integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -108,7 +99,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Registering all built modules
 app.include_router(data_foundation_router)
 app.include_router(impact_forecaster_router)
 app.include_router(compound_conflict_router)

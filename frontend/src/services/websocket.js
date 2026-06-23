@@ -17,7 +17,7 @@ export const SAFE_API_URL = (() => {
 // Automatically convert the secure or standard http protocol into sockets cleanly
 const WS_URL =
   SAFE_API_URL.replace("https://", "wss://").replace("http://", "ws://") +
-  "/api/ws/dashboard";
+  "/api/ws/live";
 
 let ws = null;
 

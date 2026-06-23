@@ -1,83 +1,172 @@
-# File: modules/routing_engine/service.py
 import logging
+import networkx as nx
+import osmnx as ox
 import asyncio
-import aiohttp
+import pickle
+from typing import Dict, Any
 from sqlalchemy import text
 from database import AsyncSessionLocal
-
-from modules.mapmyindia_manager import mapmyindia_auth
-from config import FRONTEND_URL
-
-# PRODUCTION SCALE FIX: Import directly from root directory path instead of artificial app/ module
-from http_client import http_pool
+from config import BENGALURU_GRAPH_CACHE
 
 logger = logging.getLogger(__name__)
 
-# PRODUCTION SCALE FIX: Concurrency control throttling limit to avoid upstream 429 rate limits
-MAPS_SEMAPHORE = asyncio.Semaphore(20)
+# --- IN-MEMORY CACHES (Sub-second Response Times) ---
+_GEOJSON_CACHE = None
+_MEM_GRAPH = None
 
-async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
-    """
-    Uses MapmyIndia Enterprise Routing API to calculate live diversions.
-    Throttled by an asyncio Semaphore to handle sudden 100+ concurrent incident shocks.
-    """
-    logger.info(f"[Routing Engine] Request received for {corridor}. Queueing for API allocation...")
-    
-    try:
-        token = await mapmyindia_auth.get_valid_token()
-    except Exception as e:
-        logger.error(f"Could not get MapmyIndia token: {e}")
-        return {"status": "Error", "route_geojson": None, "barricade_points": []}
-    
-    coords_str = f"{o_lon},{o_lat};{d_lon},{d_lat}"
-    url = f"https://apis.mapmyindia.com/advancedmaps/v1/{token}/route_adv/driving/{coords_str}?alternatives=true&geometries=geojson"
-    
-    headers = {"Referer": FRONTEND_URL}
-    timeout = aiohttp.ClientTimeout(total=6) # Enforce responsive timeout limits
-    
-    # Enter throttling lock context
-    async with MAPS_SEMAPHORE:
+def init_routing_graph():
+    global _MEM_GRAPH
+    if _MEM_GRAPH is None:
+        logger.info(f"[STARTUP] Warm-up: Loading Binary Graph into RAM from {BENGALURU_GRAPH_CACHE}...")
         try:
-            # PRODUCTION SCALE FIX: Expanded guard check for uninitialized or closed session states
-            if not http_pool.session or http_pool.session.closed:
-                http_pool.start()
-                
-            async with http_pool.session.get(url, headers=headers, timeout=timeout) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"MapmyIndia Routing API failed: {error_text}")
-                    return {"status": "Error", "route_geojson": None, "barricade_points": []}
-                
-                data = await response.json()
-                
-                if not data.get("routes"):
-                    logger.warning("No valid diversion path found by MapmyIndia.")
-                    return {"status": "Gridlock - No Path", "route_geojson": None, "barricade_points": []}
-                    
-                best_route = data["routes"][0]
-                
-                route_geojson = {
-                    "type": "Feature",
-                    "properties": {"name": f"Tactical Diversion for {corridor}", "type": "enterprise_route"},
-                    "geometry": best_route["geometry"]
-                }
-                barricade_points = [{"lat": o_lat, "lon": o_lon}]
-                
-                return {
-                    "status": "Optimal Diversion Found",
-                    "route_geojson": route_geojson,
-                    "barricade_points": barricade_points,
-                    "blocked_construction_nodes": 0
-                }
-        except asyncio.TimeoutError:
-            logger.error(f"MapmyIndia Routing API timed out for corridor: {corridor}")
-            return {"status": "Timeout Error", "route_geojson": None, "barricade_points": []}
+            with open(BENGALURU_GRAPH_CACHE, 'rb') as f:
+                _MEM_GRAPH = pickle.load(f)
+            logger.info("[STARTUP] Success: Bengaluru road network cached in memory via Pickle.")
+        except Exception as crash_err:
+            logger.critical(f"[STARTUP] Critical Failure parsing Pickle file: {crash_err}")
+
+async def _get_graph() -> nx.MultiDiGraph:
+    global _MEM_GRAPH
+    if _MEM_GRAPH is None:
+        logger.warning("[PERFORMANCE WARNING] Graph was not pre-warmed on startup! Loading lazily...")
+        try:
+            def load_pickle():
+                with open(BENGALURU_GRAPH_CACHE, 'rb') as f:
+                    return pickle.load(f)
+            _MEM_GRAPH = await asyncio.to_thread(load_pickle)
         except Exception as e:
-            logger.error(f"Routing Error: {e}")
-            return {"status": "Error", "route_geojson": None, "barricade_points": []}
+            logger.error(f"Failed to lazy-load binary graph: {e}")
+            raise e
+    return _MEM_GRAPH
+
+async def _get_corridor_risks() -> Dict[str, float]:
+    risks = {}
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("SELECT corridor, risk_score FROM corridor_risk_profiles"))
+            rows = result.fetchall()
+            for r in rows:
+                risks[str(r.corridor).strip().lower()] = float(r.risk_score)
+    except Exception as e:
+        logger.error(f"Error fetching risk scores: {e}")
+    return risks
 
 async def generate_network_metrics_geojson() -> dict:
-    return {"type": "FeatureCollection", "features": []}
+    global _GEOJSON_CACHE
+    
+    if _GEOJSON_CACHE is not None:
+        return {"type": "FeatureCollection", "features": _GEOJSON_CACHE}
+
+    G = await _get_graph()
+    risks = await _get_corridor_risks()
+    features = []
+    
+    allowed_highways = ['primary', 'secondary', 'trunk', 'motorway', 'primary_link', 'secondary_link']
+
+    for u, v, key, data in G.edges(keys=True, data=True):
+        if 'geometry' in data:
+            highway_type = data.get('highway', '')
+            
+            if isinstance(highway_type, list):
+                if not any(h in allowed_highways for h in highway_type):
+                    continue
+            else:
+                if highway_type not in allowed_highways:
+                    continue
+
+            name = data.get('name', 'Unknown')
+            if isinstance(name, list):
+                name = name[0]
+                
+            normalized_name = str(name).strip().lower()
+            risk_score = risks.get(normalized_name, 0.0)
+            
+            # --- HACKATHON DEMO OVERRIDES ---
+            if "mysore" in normalized_name or "mysuru" in normalized_name:
+                risk_score = max(risk_score, 0.95)
+            elif "outer ring road" in normalized_name or "orr" in normalized_name:
+                risk_score = max(risk_score, 0.75)
+            elif "silk board" in normalized_name:
+                risk_score = max(risk_score, 0.60)
+
+            coords = list(data['geometry'].coords)
+            
+            feature = {
+                "type": "Feature",
+                "properties": {
+                    "name": str(name),
+                    "highway": str(highway_type),
+                    "risk_score": float(risk_score)
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coords
+                }
+            }
+            features.append(feature)
+
+    _GEOJSON_CACHE = features
+    return {"type": "FeatureCollection", "features": features}
+
+async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
+    G = await _get_graph()
+    
+    try:
+        orig_node = ox.distance.nearest_nodes(G, X=o_lon, Y=o_lat)
+        dest_node = ox.distance.nearest_nodes(G, X=d_lon, Y=d_lat)
+
+        construction_coords = await _get_construction_coordinates(corridor)
+        blocked_nodes = set()
+        for lat, lon in construction_coords:
+            node = ox.distance.nearest_nodes(G, X=lon, Y=lat)
+            blocked_nodes.add(node)
+
+        G_tactical = G.copy()
+        edges_to_remove = []
+        for u, v, k in G_tactical.edges(keys=True):
+            if u in blocked_nodes or v in blocked_nodes:
+                edges_to_remove.append((u, v, k))
+        
+        G_tactical.remove_edges_from(edges_to_remove)
+
+        route_nodes = nx.shortest_path(G_tactical, orig_node, dest_node, weight='length')
+        
+        route_coords = []
+        barricade_points = []
+        
+        for idx, node_id in enumerate(route_nodes):
+            node_data = G_tactical.nodes[node_id]
+            route_coords.append((node_data['x'], node_data['y']))
+            
+            # FIXED: Checks incoming AND outgoing severed edges symmetrically
+            original_neighbors = list(nx.all_neighbors(G, node_id))
+            tactical_neighbors = list(nx.all_neighbors(G_tactical, node_id))
+            
+            if len(original_neighbors) > len(tactical_neighbors):
+                barricade_points.append({"lat": node_data['y'], "lon": node_data['x']})
+
+        route_geojson = {
+            "type": "Feature",
+            "properties": {"name": f"Tactical Diversion for {corridor}", "type": "ai_route"},
+            "geometry": {
+                "type": "LineString",
+                "coordinates": route_coords
+            }
+        }
+
+        return {
+            "status": "Optimal Diversion Found",
+            "route_geojson": route_geojson,
+            "barricade_points": barricade_points,
+            "blocked_construction_nodes": len(blocked_nodes)
+        }
+
+    except nx.NetworkXNoPath:
+        logger.warning(f"No valid diversion found around {corridor}. Total Gridlock likely.")
+        return {"status": "Gridlock - No Path", "route_geojson": None, "barricade_points": []}
+    except Exception as e:
+        logger.error(f"Routing Error: {e}")
+        return {"status": "Error", "route_geojson": None, "barricade_points": []}
 
 async def _get_construction_coordinates(corridor: str) -> list[tuple[float, float]]:
     coords = []

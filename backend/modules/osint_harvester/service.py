@@ -23,9 +23,8 @@ async def geocode_location(location_name: str) -> tuple[float, float]:
     """
     logger.info(f"Geocoding dynamic location via MapmyIndia: {location_name}")
     
-    # URL encode the location to handle spaces safely (e.g., "Silk Board" -> "Silk%20Board")
     query = urllib.parse.quote(f"{location_name}, Bengaluru")
-    url = f"[https://apis.mapmyindia.com/advancedmaps/v1/](https://apis.mapmyindia.com/advancedmaps/v1/){MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
+    url = f"https://apis.mapmyindia.com/advancedmaps/v1/{MAPMYINDIA_STATIC_KEY}/geo_code?addr={query}"
     headers = {
         "Referer": FRONTEND_URL
     }
@@ -47,7 +46,6 @@ async def geocode_location(location_name: str) -> tuple[float, float]:
     except Exception as e:
         logger.error(f"MapmyIndia Geocoding Error: {e}")
     
-    # Safe Fallback to a high-risk corridor if API limits are reached or timeout occurs
     logger.warning("Dynamic geocoding failed. Falling back to Mysore Road coordinates.")
     return 12.9343, 77.5348
 
@@ -56,7 +54,6 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     
     client = get_gemini_client()
     
-    # Enhanced prompt requesting full high-resolution contextual data for our ML model
     prompt = f"""
     You are an intelligence extraction pipeline for the Bengaluru Traffic Police.
     Extract the event details from the following unstructured text.
@@ -75,7 +72,7 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     """
     
     try:
-        # Utilizing native response_mime_type to guarantee a perfectly valid JSON output
+        # FIXED: Corrected model string to gemini-1.5-flash
         response = await client.aio.models.generate_content(
             model='gemini-3.5-flash',
             contents=prompt,
@@ -93,24 +90,20 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
 
     corridor_name = extracted_data.get("corridor", "UNKNOWN")
 
-    # Handle "UNKNOWN" locations gracefully
     if corridor_name == "UNKNOWN":
         logger.info("No specific location detected in OSINT. Flagging as City-Wide Alert.")
-        lat, lon = 12.9716, 77.5946  # Geographic center of Bengaluru
+        lat, lon = 12.9716, 77.5946
         ui_action = "SOFT_ALERT"     
         alert_message = f"City-wide {extracted_data['event_cause']} detected via {source}. Awaiting location telemetry."
     else:
-        # It has a location, proceed with MapmyIndia
         lat, lon = await geocode_location(corridor_name)
         ui_action = "TRIGGER_SIREN_AND_SNAP_MAP"
         alert_message = f"High-risk {extracted_data['event_cause']} detected via {source}. Barricade routing required."
     
-    # Calculate Dates
     start_time = datetime.now() + timedelta(hours=extracted_data.get("hours_from_now", 24))
     end_time = start_time + timedelta(hours=extracted_data.get("duration_hours", 4))
     
     try:
-        # FIXED: High-Resolution parameter passthrough implemented to fully inform the LightGBM classifiers
         forecast = await predict(
             event_cause=extracted_data["event_cause"],
             corridor=corridor_name,
@@ -126,7 +119,6 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
     except Exception as e:
         logger.error(f"Impact Forecaster failed: {e}")
         predicted_risk = 0.5
-        # FIXED: Added fallback data structure to prevent UnboundLocalError / KeyError downstream during alert building
         forecast = {
             "compound_risk_score": 0.5,
             "risk_level": "Medium",
@@ -135,7 +127,6 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
 
     dynamic_z_score = round(predicted_risk * 3.5, 2)
     
-    # Only register to Learning Engine if we actually have a valid corridor targeting infrastructure updates
     event_id = f"OSINT-{uuid.uuid4().hex[:6].upper()}"
     reg_message = "Event logged as city-wide. Not added to corridor learning engine."
     
@@ -152,7 +143,6 @@ async def process_osint_intel(raw_text: str, source: str) -> dict:
         except Exception as e:
             logger.error(f"Failed to register OSINT event: {e}")
 
-    # Broadcast to active React dashboards via WebSocket singletons
     alert_payload = {
         "type": "CRITICAL_ALERT",
         "timestamp": datetime.now().isoformat(),

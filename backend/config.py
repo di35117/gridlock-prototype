@@ -25,3 +25,7 @@ DATA_PATH = os.getenv(
     "DATA_PATH", 
     str(BASE_DIR / "data" / "astram_events.csv")
 )
+BENGALURU_GRAPH_CACHE = os.getenv(
+    "BENGALURU_GRAPH_CACHE", 
+    str(BASE_DIR / "data" / "bengaluru_network.pkl")
+)

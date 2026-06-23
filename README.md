@@ -1,5 +1,9 @@
 # Gridlock
 
+![Flipkart Gridlock 2.0](https://img.shields.io/badge/Hackathon-Flipkart%20Gridlock%202.0-FFE11B?style=flat-square&labelColor=2874F0)
+![Bengaluru Traffic Police](https://img.shields.io/badge/Built%20for-Bengaluru%20Traffic%20Police-0033A0?style=flat-square&labelColor=111827)
+![MapmyIndia](https://img.shields.io/badge/Geocoding%20%26%20Live%20Traffic-MapmyIndia-FF5722?style=flat-square&labelColor=111827)
+
 An autonomous, predictive command platform for the Bengaluru Traffic Police (BTP).
 
 Gridlock takes 8,173+ historical ASTRAM traffic incident records and turns them into a live decision-support system. It forecasts how a planned event will hit a road corridor before it happens, catches the moment construction work and a new event start compounding into serious risk, pulls in intel from CCTV feeds and social/news sources on its own, recommends manpower and barricade placement, works out diversion routes around blockages, and learns from what actually happened afterward so the forecasts get sharper over time. All of it streams live to a command-center dashboard over WebSockets.
@@ -8,7 +12,7 @@ It's built as a modular FastAPI backend, so each capability (forecasting, routin
 
 ## The problem
 
-BTP currently manages traffic operations reactively. There's no system that can answer, ahead of time: if we approve this procession on Mysore Road at 6 PM on a Friday, how bad will it actually get, which station should respond, and is there already a construction zone nearby that's going to make it worse? Gridlock closes that gap by combining a trained ML risk model, rule-based compound-risk math, an optimizer, and an LLM copilot into one pipeline.
+BTP currently manages traffic operations reactively. There's no system that can answer, ahead of time: if we approve this procession on Mysore Road at 6 PM on a Friday, how bad will it actually get, which station should respond, and is there already a construction zone nearby that's going to make it worse? This is the gap Problem Statement 2 calls out directly, and it's the one Gridlock closes — combining a trained ML risk model, rule-based compound-risk math, an optimizer, and an LLM copilot into one pipeline.
 
 ## Core capabilities
 
@@ -17,13 +21,13 @@ BTP currently manages traffic operations reactively. There's no system that can 
 | **Data Foundation** | Loads and cleans the ASTRAM incident CSV into PostgreSQL on first boot. Computes per-corridor risk DNA, station-corridor mappings, and per-event-cause statistics that every other module reads from. |
 | **Impact Forecaster** | Two LightGBM classifiers (priority and road-closure), tuned with Optuna, trained on cyclic time, geography, vehicle-type, and historical corridor/cause features. Outputs a blended `compound_risk_score` and a risk tier for any event before it happens. |
 | **Compound Conflict Detector** | Catches when active construction zones on a corridor multiply the risk of a new event, capped at a 2.5x multiplier, and raises explicit warnings (e.g. "diversion routing is mandatory"). |
-| **AI Copilot** | Calls Gemini to pull context from the forecaster and conflict detector, then drafts a structured, field-ready Operational Order: threat assessment, station deployment, barricading strategy, action checklist. |
-| **OSINT Harvester** | Takes raw, unstructured text (news, social media, radio), including via webhook from enterprise listening tools, and uses Gemini as a named-entity extractor to turn it into a structured event. Forecasts its risk and broadcasts an alert on its own. |
-| **CCTV Ingestion** | A plug-and-play webhook for third-party computer-vision camera systems. Matches a known schema instantly, or falls back to a Gemini-powered "universal data translator" for proprietary payloads, then feeds the result into the forecaster. |
+| **AI Copilot** | Aggregates output from the Impact Forecaster, Compound Conflict Detector, Routing Engine, and Resource Recommender, then calls Gemini to draft a structured, field-ready Operational Order: threat assessment, station deployment, barricading & diversion strategy, action checklist. |
+| **OSINT Harvester** | Takes raw, unstructured text (news, social media, radio), including via webhook from enterprise listening tools, and uses Gemini as a named-entity extractor to turn it into a structured event. Geocodes the location via MapmyIndia, forecasts its risk, and broadcasts an alert on its own. |
+| **CCTV Ingestion** | A plug-and-play webhook for third-party computer-vision camera systems. Incoming payloads are offloaded to a Celery/Redis task queue so high alert volume never blocks the main event loop. Matches a known schema instantly, or falls back to a Gemini-powered "universal data translator" for proprietary payloads, then feeds the result into the forecaster. |
 | **Surge Detector** | Z-score anomaly detection against each corridor's historical hourly baseline. Flags sudden incident spikes (above 2σ) for immediate QR (Quick Response) team deployment. Runs as a background polling daemon too. |
 | **Resource Recommender** | Recommends primary/backup stations and a manpower tier per risk level. Uses linear programming (PuLP) to optimally split a limited officer pool across multiple simultaneous events by risk-weighted priority. |
-| **Tactical Routing Engine** | Loads a Bengaluru road network graph (OSMnx/NetworkX), removes nodes near active construction, and computes a diversion route plus barricade placement points as GeoJSON for the map UI. |
-| **Learning Engine** | Registers events in Redis as they're created. Once an event wraps up, it autonomously polls live Google Maps congestion data and runs an exponential-moving-average correction against the original forecast, so the model's calibration improves over time without retraining. |
+| **Tactical Routing Engine** | Loads a Bengaluru road network graph (OSMnx/NetworkX) from a pre-compiled binary pickle cache for sub-second startup, removes nodes/edges near active construction, and computes a diversion route plus barricade placement points as GeoJSON — with a forced-path fallback if no safe detour exists. |
+| **Learning Engine** | Registers events in Redis as they're created. Once an event wraps up, it autonomously polls the MapmyIndia Distance Matrix / Distance Matrix ETA APIs for live congestion ground-truth and runs an exponential-moving-average correction against the original forecast, so the model's calibration improves over time without retraining. |
 | **WebSockets** | A connection manager that broadcasts every alert (surge, OSINT, CCTV) instantly to all connected dashboard clients. |
 
 ## Architecture
@@ -34,8 +38,13 @@ BTP currently manages traffic operations reactively. There's no system that can 
 └──────┬──────┘   └──────┬───────┘
        │  raw JSON        │  raw text
        ▼                  ▼
-  Gemini schema      Gemini NER
-  normalization       extraction
+  Celery + Redis     Gemini NER
+  task queue          extraction
+  (non-blocking)          │
+       │                  │
+       ▼                  │
+  Gemini schema           │
+  normalization           │
        │                  │
        └────────┬─────────┘
                  ▼
@@ -47,33 +56,37 @@ BTP currently manages traffic operations reactively. There's no system that can 
         ┌────────┴─────────┐
         ▼                  ▼
  Resource Recommender   Routing Engine
-   (PuLP optimizer)    (OSMnx/NetworkX)
+   (PuLP optimizer)    (OSMnx/NetworkX,
+                        binary pickle cache)
         │                  │
         └────────┬─────────┘
                  ▼
    FastAPI REST (/api/*)  +  WebSocket (/api/ws/dashboard)
                  │
                  ▼
-┌────────────────────────────────────────────┐
-│  Frontend — React 19 + Vite                 │
-│                                              │
-│  zustand          live alert feed, UI state │
-│  maplibre-gl /                              │
-│  react-map-gl     corridors, risk overlays, │
-│                    diversion routes,        │
-│                    barricade points         │
-│  @turf/turf       geo math on the GeoJSON   │
-│                    from the Routing Engine  │
-│  react-markdown   renders the Copilot's     │
-│                    Operational Orders       │
-│  lucide-react     icon set                  │
-└────────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│  Frontend — React 19 + Vite                  │
+│                                               │
+│  zustand           live alert feed, UI state │
+│  maplibre-gl /      keyless vector map        │
+│  react-map-gl       (CartoDB tiles) — risk    │
+│                      overlays, diversion      │
+│                      routes, barricades       │
+│  @turf/turf         geo math on the GeoJSON   │
+│                      from the Routing Engine  │
+│  react-markdown     renders the Copilot's     │
+│                      Operational Orders       │
+│  lucide-react       icon set                  │
+└─────────────────────────────────────────────┘
                  │
                  ▼
         Learning Engine (Redis EMA)
-        runs as its own background loop,
+        polls MapmyIndia Distance Matrix,
+        runs on its own background loop,
         closes the loop on event end
 ```
+
+MapmyIndia is used **server-side only** — for Geocoding (OSINT Harvester) and Distance Matrix ground-truth (Learning Engine). The live map itself renders on **MapLibre GL JS** against open CartoDB tiles; the original MapmyIndia Web SDK integration proved too fragile across preview/production domains (frequent `401`s tied to per-domain whitelisting), so the frontend was decoupled from it entirely. No map API key is required on the client.
 
 The frontend pulls data over REST for one-off requests (forecasts, tactical plans, diversion routes, copilot orders) and stays subscribed to the WebSocket for push alerts (surge, OSINT, CCTV) without polling. The Learning Engine isn't driven by the frontend at all; it runs on its own schedule in the background and feeds corrected calibration back into future forecasts.
 
@@ -84,21 +97,24 @@ Every feature module reads shared, pre-computed corridor/event statistics from t
 | Layer | Technology |
 |---|---|
 | API framework | FastAPI (async), Pydantic v2 |
-| Database | PostgreSQL via SQLAlchemy (async) and asyncpg |
-| Cache / state | Redis (async client), powers the Learning Engine's calibration memory |
+| Database | PostgreSQL + PostGIS via SQLAlchemy (async) and asyncpg |
+| Cache / state / broker | Redis (async client) — Learning Engine calibration memory, WebSocket pub/sub, and the Celery broker |
+| Background tasks | Celery — offloads high-volume CCTV webhook payloads off the main event loop |
 | Machine learning | LightGBM, scikit-learn, Optuna (Bayesian hyperparameter tuning), pandas/numpy |
 | Generative AI | Google Gemini (`google-genai` SDK) for copilot drafting, schema translation, and NER extraction |
 | Optimization | PuLP (CBC solver) for linear-programming manpower allocation |
-| Routing | OSMnx and NetworkX over a cached Bengaluru road graph |
-| Live traffic data | Google Maps Distance Matrix API |
+| Routing | OSMnx and NetworkX over a Bengaluru road graph, cached as a binary pickle for fast in-memory loading |
+| Live traffic ground-truth | MapmyIndia Distance Matrix / Distance Matrix ETA APIs |
+| Geocoding | MapmyIndia Geocoding API (OSINT Harvester) |
 | Real-time transport | Native FastAPI WebSockets |
-| Frontend | React 19, Vite, Tailwind CSS 4, MapLibre GL JS, Zustand |
+| Frontend | React 19, Vite, Tailwind CSS 4, MapLibre GL JS (keyless, CartoDB tiles), Zustand |
 
 ## Project structure
 
 ```
 gridlock-prototype/
 ├── backend/
+│   ├── tasks.py                  # Celery app + worker tasks (CCTV ingestion offload)
 │   └── modules/
 │       ├── ai_copilot/           # Gemini-drafted operational orders
 │       ├── cctv_ingestion/       # Autonomous CCTV webhook + LLM normalization
@@ -150,60 +166,73 @@ All routes are mounted under `/api`. Replace `{corridor}` with a URL-encoded cor
 ### Backend prerequisites
 
 - Python 3.11+
-- PostgreSQL
-- Redis
+- PostgreSQL (with PostGIS)
+- Redis (also doubles as the Celery broker)
 - A Gemini API key
-- A Google Maps API key (optional, falls back to simulated congestion data in demo mode)
-- The ASTRAM incident CSV and a pre-downloaded Bengaluru road graph for the routing engine
+- A MapmyIndia REST/Map SDK key plus an OAuth client ID/secret — used server-side only, for Geocoding and Distance Matrix. Falls back to a fixed fallback coordinate and simulated congestion data in demo mode if unavailable.
+- The ASTRAM incident CSV and a pre-compiled Bengaluru road graph (binary pickle) for the routing engine
 
 ### Environment variables
 
-This is the actual `.env.example` from the project root:
+This project's `.env` has shifted a few times during the build — below is the most complete picture, merged from `config.py` and the local setup script. Treat it as a strong starting point and reconcile it against your actual `config.py` before deploying, since a couple of these have moved or been renamed along the way.
 
 ```
+DATABASE_URL=postgresql+asyncpg://btp_admin:btp_secure_pass@localhost:5432/btp_intelligence
+REDIS_URL=redis://localhost:6379/0
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# Geospatial & Mapping APIs
-# Required for the Routing Engine and Google Maps validation steps
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+# MapmyIndia — used server-side only (Geocoding + Distance Matrix), never on the frontend
+MAPMYINDIA_STATIC_KEY=your_mapmyindia_rest_and_sdk_key
+MAPMYINDIA_CLIENT_ID=your_mapmyindia_client_id
+MAPMYINDIA_CLIENT_SECRET=your_mapmyindia_client_secret
 
-# Security
-# Run 'openssl rand -hex 32' to generate a secure fallback secret key
+# Security — generate via: openssl rand -hex 32
 SECRET_KEY=your_secret_key_here
 
-# File Paths & Cache Configurations
-# Path to the ASTRAM historical incident dataset (e.g., data/astram_events.csv)
-DATA_PATH=data/astram_events.csv
-# Path where the serialized OpenStreetMap graph network file is cached
-BENGALURU_GRAPH_CACHE=data/bengaluru_graph.json
+# Behavior flags
+FRONTEND_URL=http://localhost:5173
+DEMO_MODE=True
 
-DB_POOL_SIZE=20
-DB_MAX_OVERFLOW=10
-DB_POOL_TIMEOUT=60
-USE_PGBOUNCER=FALSE
+# File paths
+DATA_PATH=data/astram_events.csv
+BENGALURU_GRAPH_CACHE=data/bengaluru_graph.pkl
 ```
 
-A couple of things worth double-checking against your actual `config.py` before deploying:
-
-Database connection. The pooling vars above (`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `USE_PGBOUNCER`) configure the SQLAlchemy engine, but the connection string itself (host, user, password, db name, or a single `DATABASE_URL`) isn't in this snippet. Make sure it's set somewhere `config.py` / `database.py` actually reads from.
-
-Redis. `learning_engine/service.py` reads a `REDIS_URL` at import time to back its EMA calibration store, and it isn't listed here either. It probably lives in a separate `.env` entry or defaults to `redis://localhost:6379` in code, worth confirming so the Learning Engine doesn't fail silently on startup.
-
-Also note `BENGALURU_GRAPH_CACHE` here points to a `.json` file, while `routing_engine/service.py` loads it via `ox.load_graphml(...)`, which expects GraphML (XML), not JSON. Either the extension in `.env.example` is just illustrative or the cache format needs to match what `load_graphml` can parse.
+`GOOGLE_MAPS_API_KEY` doesn't need to be here anymore — the Learning Engine now polls MapmyIndia's Distance Matrix / Distance Matrix ETA APIs directly for ground-truth congestion instead of Google Maps.
 
 ### Install
 
 ```bash
 pip install fastapi uvicorn sqlalchemy asyncpg pydantic \
     pandas numpy lightgbm scikit-learn optuna joblib \
-    redis googlemaps pulp networkx osmnx google-genai
+    redis celery pulp networkx osmnx google-genai aiohttp
 ```
+
+### Compiling the routing graph
+
+Parsing the raw GraphML road network at startup spikes memory enough to OOM-kill a small container. Compile it once into a binary pickle instead:
+
+```bash
+python scripts/compile_network_graph.py
+```
+
+This writes `data/bengaluru_graph.pkl`, which the Routing Engine deserializes directly into memory at boot — under a second, instead of 30+.
 
 ### Run
 
+This needs two backend processes running side by side: the API server, and the Celery worker that offloads CCTV webhook processing.
+
 ```bash
+# Terminal 1 — API server
 uvicorn main:app --reload --port 8000
 ```
+
+```bash
+# Terminal 2 — Celery worker
+celery -A tasks.celery_app worker --loglevel=info --pool=solo
+```
+
+`--pool=solo` is required on Windows, since Celery's default prefork pool relies on `fork()`, which isn't available there. On macOS/Linux you can drop it for better concurrency.
 
 On first boot, the Data Foundation module loads the CSV and computes all derived statistics automatically. Train the forecasting models once data is loaded:
 
@@ -222,9 +251,9 @@ The dashboard is a React 19 + Vite single-page app.
 | `react`, `react-dom` | UI runtime (v19) |
 | `vite` | Dev server and build tool |
 | `tailwindcss`, `@tailwindcss/vite` | Utility-first styling (Tailwind v4 Vite plugin) |
-| `maplibre-gl`, `react-map-gl` | Interactive map rendering: corridors, risk overlays, diversion routes, barricade points |
+| `maplibre-gl`, `react-map-gl` | Interactive, keyless map rendering against public CartoDB tiles: corridors, risk overlays, diversion routes, barricade points |
 | `@turf/turf` | Client-side geospatial calculations (distances, buffers) on top of the GeoJSON the Routing Engine returns |
-| `zustand` | Lightweight global state, likely backing the live WebSocket alert feed and dashboard UI state |
+| `zustand` | Lightweight global state backing the live WebSocket alert feed and dashboard UI state |
 | `react-markdown` | Renders the AI Copilot's Markdown-formatted Operational Orders |
 | `lucide-react` | Icon set |
 | `eslint` + plugins | Linting (flat config, React Hooks / Refresh rules) |
@@ -237,14 +266,22 @@ npm install
 npm run dev
 ```
 
-By default Vite serves on `http://localhost:5173`. Point the app at the backend by configuring the API base URL and WebSocket URL (`ws://localhost:8000/api/ws/dashboard`). Check `src/` for where these are defined (an `.env` file or a config constant), and add a `.env.example` if one doesn't exist yet since it wasn't included in the files shared so far.
+Create `frontend/.env.local`:
+
+```
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+No commercial map API key is needed here — the dashboard renders on open-source MapLibre GL JS against public CartoDB tiles, not a keyed SDK.
+
+By default Vite serves on `http://localhost:5173`.
 
 Other scripts:
 
 ```bash
 npm run build     # production build
 npm run preview   # preview the production build locally
-npm run lint       # run ESLint
+npm run lint      # run ESLint
 ```
 
 ## Example: forecasting an event
@@ -261,13 +298,36 @@ curl -X POST http://localhost:8000/api/forecast/predict \
 
 This returns the predicted priority, road-closure probability, corridor risk score, and an overall `risk_level` (Low/Medium/High/Critical). It's the same context the AI Copilot and Compound Conflict Detector build on.
 
+## Testing
+
+| Layer | What it covers |
+|---|---|
+| **End-to-end** (`test_e2e.py`) | Full incident lifecycle — mocked OSINT webhook → Gemini extraction → Impact Forecaster → Compound Conflict → broadcast `CRITICAL_ALERT` → Routing Engine + Resource Recommender. |
+| **Unit / service** | One file per module (`test_data_foundation.py`, `test_cctv.py`, `test_impact.py`, `test_compound.py`, `test_copilot.py`, `test_learning.py`, `test_websocket.py`) — covers feature engineering, the Celery handoff, LightGBM thresholding, the 2.5x compound-risk cap, Copilot Markdown formatting, EMA calibration, and WebSocket connection cleanup. |
+| **Database integration** (`test_db_integration.py`, `conftest.py`) | Spins up an ephemeral PostgreSQL 15 instance per test session via **Testcontainers**, so the Surge Detector's Z-score SQL and other spatial queries run against the real PostgreSQL dialect instead of a SQLite mock. |
+| **Load testing** (`locustfile.py`) | Simulates concurrent traffic against the CCTV webhook, Surge Detector polling, and OSINT firehose via **Locust**, to catch event-loop starvation or connection-pool exhaustion before it happens live. |
+
+CI runs the same Testcontainers-backed PostgreSQL instance inside GitHub Actions on every pull request, then tears it down automatically — no test data ever touches the real database.
+
+## Deployment
+
+| Tier | Platform | Notes |
+|---|---|---|
+| Frontend | Vercel Edge Network | Static Vite build, served from the nearest edge node. No commercial map API key needed, since the map runs on MapLibre/CartoDB. |
+| Backend (API + Celery workers) | Containerized (Railway / AWS ECS) | Stateless ASGI pods behind a load balancer; Celery workers run as a separate process from the same image. |
+| Data layer | Managed PostgreSQL 15 + Redis | Redis backs both the Celery broker and the WebSocket pub/sub fan-out. |
+
+The routing graph is the one piece that doesn't fit a small container out of the box: parsing the raw 50MB GraphML file at startup spikes memory to roughly 1.5GB, enough to OOM-kill a 500MB container. Pre-compiling it locally into a binary pickle and deserializing that at boot instead drops both startup time (32s → under 1s) and memory footprint (1.5GB → ~150MB) enough to run comfortably on cheap container hardware.
+
 ## Demo / hackathon notes
 
-The Surge Detector and Learning Engine include `is_demo_mode` flags that simulate realistic incident spikes and Google Maps congestion data when live feeds aren't available, with a one-shot guard so the autonomous scheduler doesn't spam the dashboard with repeat alerts during a live demo.
+Built by **Team Dark Sister** (Dishank Choudhury — team lead, Tanya Shahi) for **Flipkart Gridlock 2.0**.
 
-The Learning Engine's autonomous scan and Surge Detector's polling daemon are meant to be wired into a scheduler (e.g. APScheduler) at app startup. That wiring lives in the main application entry point, outside this module set.
+The Surge Detector and Learning Engine include `is_demo_mode` flags that simulate realistic incident spikes and MapmyIndia congestion data when live feeds aren't available, with a one-shot guard so the autonomous scheduler doesn't spam the dashboard with repeat alerts during a live demo.
 
-All AI-generated content (Operational Orders, OSINT extraction, CCTV schema translation) currently runs on `gemini-3.5-flash` and can be swapped via `ai_copilot/service.py`.
+The Learning Engine's autonomous scan and Surge Detector's polling daemon run on an APScheduler instance wired up in the main application entry point.
+
+All AI-generated content (Operational Orders, OSINT extraction, CCTV schema translation) currently runs on `gemini-3.5-flash` and can be swapped via `ai_copilot/service.py`. Worth a final check before the demo, though — internal notes reference both `gemini-3.5-flash` and `gemini-1.5-flash` for the Copilot specifically, so confirm which one is actually wired in rather than assuming.
 
 ## License
 

@@ -108,7 +108,7 @@ async def generate_network_metrics_geojson() -> dict:
             feature = {
                 "type": "Feature",
                 "properties": {
-                    "corridor": str(name), # <-- FIX: Changed from "name" to "corridor" so the React map can read it
+                    "corridor": str(name), 
                     "highway": str(highway_type),
                     "risk_score": float(risk_score)
                 },
@@ -144,11 +144,6 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
 
         G_tactical.remove_edges_from(edges_to_remove)
 
-        # FIX: fall back to a forced path through construction instead of
-        # returning no route at all when the safe graph disconnects origin
-        # from destination. NetworkXNoPath and NodeNotFound are sibling
-        # exception classes (confirmed by testing earlier in this thread),
-        # not a subclass relationship, so both need catching here.
         try:
             route_nodes = nx.shortest_path(G_tactical, orig_node, dest_node, weight='length')
             status = "Optimal Diversion Found"
@@ -164,10 +159,6 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
             node_data = G.nodes[node_id]
             route_coords.append((node_data['x'], node_data['y']))
 
-            # FIX: G.neighbors() on a directed MultiDiGraph only returns
-            # successors, silently missing nodes that lost an INCOMING edge
-            # from a blocked node. edges_to_remove above treats both
-            # directions symmetrically, so this comparison needs to as well.
             original_neighbors = list(nx.all_neighbors(G, node_id))
             tactical_neighbors = list(nx.all_neighbors(G_tactical, node_id))
 
@@ -202,10 +193,14 @@ async def _get_construction_coordinates(corridor: str) -> list[tuple[float, floa
     coords = []
     try:
         async with AsyncSessionLocal() as session:
+            # BUG 4 FIX: Query 'incidents' table instead of 'active_construction_zones'
             query = text("""
                 SELECT latitude, longitude 
-                FROM active_construction_zones
-                WHERE corridor ILIKE :c
+                FROM incidents
+                WHERE corridor ILIKE :c 
+                AND event_cause = 'construction'
+                AND latitude IS NOT NULL 
+                AND longitude IS NOT NULL
             """)
             result = await session.execute(query, {"c": f"%{corridor}%"})
             for r in result.fetchall():

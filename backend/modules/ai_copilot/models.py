@@ -1,6 +1,4 @@
-"""
-Schemas for the AI Copilot module.
-"""
+# backend/modules/ai_copilot/models.py
 from pydantic import BaseModel, Field
 from datetime import datetime
 

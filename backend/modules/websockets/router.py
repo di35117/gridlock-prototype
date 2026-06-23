@@ -5,12 +5,8 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.websocket("/api/stream/live")
-async def websocket_endpoint(websocket: WebSocket, token: str = None):
-    """
-    Hackathon Bypass: Accepts the WebSocket connection and gracefully 
-    ignores the old React security token to prevent 403 Forbidden errors.
-    """
+async def handle_websocket(websocket: WebSocket):
+    """Core logic to handle the handshake and keep the connection alive."""
     await notifier.connect(websocket)
     try:
         while True:
@@ -20,3 +16,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = None):
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
         notifier.disconnect(websocket)
+
+@router.websocket("/api/stream/live")
+async def websocket_endpoint_live(websocket: WebSocket, token: str = None):
+    """Primary WebSocket endpoint."""
+    await handle_websocket(websocket)
+
+@router.websocket("/api/ws/dashboard")
+async def websocket_endpoint_dashboard(websocket: WebSocket, token: str = None):
+    """Alias endpoint to prevent 403 errors from older frontend clients."""
+    await handle_websocket(websocket)

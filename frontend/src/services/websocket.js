@@ -1,3 +1,4 @@
+// src/services/websocket.js
 import { useSystemStore } from "../store/useSystemStore";
 
 // Pulls from Vercel in production, or defaults to localhost in development
@@ -15,10 +16,10 @@ if (
       : `https://${absoluteApiUrl}`;
 }
 
-// Magically swaps https:// for wss:// and http:// for ws://
+// FIX: Magically swaps https:// for wss:// and points to the correct backend route
 const WS_URL =
   absoluteApiUrl.replace("https://", "wss://").replace("http://", "ws://") +
-  "/api/stream/live";
+  "/api/ws/dashboard";
 
 let ws = null;
 
@@ -34,48 +35,43 @@ export const connectSystemWebSocket = () => {
     // 1. Send all telemetry to the Intel Feed component
     store.addIntelAlert(data);
 
-    // 2. Evaluate if event critical criteria triggers Copilot actions
-    // BUG 2 FIX: Added "SURGE_ALERT" so the daemon triggers the Copilot
+    // 2. Evaluate if this requires an automated Copilot response
     if (
       data.type === "TRAFFIC_SURGE" ||
-      data.type === "SURGE_ALERT" ||
       data.type === "CRITICAL_ALERT" ||
       data.type === "CCTV_ANOMALY"
     ) {
       if (
         data.ui_action === "TRIGGER_SIREN_AND_SNAP_MAP" ||
-        data.type === "TRAFFIC_SURGE" ||
-        data.type === "SURGE_ALERT"
+        data.type === "TRAFFIC_SURGE"
       ) {
+        // Trigger UI animations
         store.triggerSurgeResponse(data.payload || data);
 
         try {
-          const API_BASE =
-            import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
-          // BUG 1 FIX: Corrected endpoint path to /api/copilot/generate
-          const res = await fetch(`${API_BASE}/api/copilot/generate`, {
+          // FIX: Use 'absoluteApiUrl' to guarantee 'https://' is attached
+          const res = await fetch(`${absoluteApiUrl}/api/copilot/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            // BUG 1 FIX: Corrected payload schema to match backend Pydantic model
-            body: JSON.stringify({
-              event_cause: data.event_cause || data.corridor || "public_event",
-              corridor: data.corridor || "Mysore Road",
-              expected_crowd: data.expected_crowd || 1000,
-              event_details: data.message || "",
-              event_datetime: new Date().toISOString(),
-              latitude: parseFloat(data.latitude || 12.9716),
-              longitude: parseFloat(data.longitude || 77.5946),
-            }),
+            body: JSON.stringify({ event_id: data.id || data.event_id }),
           });
+
+          // Guard against HTML error pages (404s/502s) before parsing JSON
+          if (!res.ok) {
+            throw new Error(`Copilot API failed with status: ${res.status}`);
+          }
 
           const executionData = await res.json();
 
+          // Poll Celery/Redis for the status of the background task
           let pollInterval = setInterval(async () => {
             try {
+              // FIX: Use 'absoluteApiUrl' for polling as well
               const statusRes = await fetch(
-                `${API_BASE}/api/copilot/status/${executionData.task_id}`,
+                `${absoluteApiUrl}/api/copilot/status/${executionData.task_id}`,
               );
+
+              if (!statusRes.ok) throw new Error("Status poll failed");
               const statusData = await statusRes.json();
 
               if (statusData.status === "completed") {
@@ -86,6 +82,7 @@ export const connectSystemWebSocket = () => {
                   finalBarricades = Object.values(statusData.barricades);
                 }
 
+                // Push final tactical data to the UI map and Markdown renderer
                 store.resolveSurgeResponse(
                   statusData.operational_order,
                   finalBarricades,
@@ -98,6 +95,7 @@ export const connectSystemWebSocket = () => {
                 store.resolveSurgeResponse(
                   "Tactical operational plan creation failed.",
                   [],
+                  null,
                   null,
                   null,
                 );
@@ -115,6 +113,7 @@ export const connectSystemWebSocket = () => {
           store.resolveSurgeResponse(
             "Failed to connect to AI Copilot service.",
             [],
+            null,
             null,
             null,
           );

@@ -1,3 +1,4 @@
+# backend/modules/cctv_ingestion/service.py
 import logging
 import json
 import uuid
@@ -12,13 +13,16 @@ from modules.learning_engine.service import register_active_event
 logger = logging.getLogger(__name__)
 
 async def process_cctv_payload(raw_payload: dict):
+    """
+    Core intelligence pipeline for CCTV data. Evaluates schemas, translates 
+    proprietary fields with Gemini, forecasts traffic impact, and alerts the UI.
+    """
     # BUG FIX 1: Guard against malformed JSON (arrays, strings, ints) silently crashing the task
     if not isinstance(raw_payload, dict):
         logger.error(f"[CCTV] Rejected non-dict payload: {type(raw_payload)}. Payload must be a JSON object.")
         return
         
     logger.info("Evaluating CCTV schema...")
-
     normalized_data = {}
 
     # 1. THE FAST PATH (Standard Schema Match)
@@ -55,7 +59,7 @@ async def process_cctv_payload(raw_payload: dict):
         }}
         """
         try:
-            # Generate using the NEW google-genai SDK
+            # Generate using the modern google-genai SDK
             response = await client.aio.models.generate_content(
                 model='gemini-3.5-flash',
                 contents=prompt
@@ -118,7 +122,7 @@ async def process_cctv_payload(raw_payload: dict):
         "ui_action": "TRIGGER_SIREN_AND_SNAP_MAP"
     }
     
-    # BUG FIX 2: Added Try/Except block around the WebSocket broadcast so failures are logged
+    # BUG FIX 2: Safeguard the WebSocket broadcast so broadcast issues don't crash the task execution
     try:
         await notifier.broadcast_alert(alert_payload)
         logger.info(f"[CCTV] Threat {event_id} broadcasted to Command Center WebSockets.")

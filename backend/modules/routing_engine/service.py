@@ -108,7 +108,7 @@ async def generate_network_metrics_geojson() -> dict:
             feature = {
                 "type": "Feature",
                 "properties": {
-                    "name": str(name),
+                    "corridor": str(name), # <-- FIX: Changed from "name" to "corridor" so the React map can read it
                     "highway": str(highway_type),
                     "risk_score": float(risk_score)
                 },

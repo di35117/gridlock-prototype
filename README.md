@@ -86,7 +86,7 @@ BTP currently manages traffic operations reactively. There's no system that can 
         closes the loop on event end
 ```
 
-MapmyIndia is used **server-side only** — for Geocoding (OSINT Harvester) and Distance Matrix ground-truth (Learning Engine). The live map itself renders on **MapLibre GL JS** against open CartoDB tiles; the original MapmyIndia Web SDK integration proved too fragile across preview/production domains (frequent `401`s tied to per-domain whitelisting), so the frontend was decoupled from it entirely. No map API key is required on the client.
+MapmyIndia is confirmed used **server-side only** — for Geocoding (OSINT Harvester) and Distance Matrix ground-truth (Learning Engine), both verified directly against the actual service code. The diagram above shows the live map rendering on **MapLibre GL JS** against open CartoDB tiles instead of MapmyIndia's Web SDK, per the documented rationale (the original SDK integration was fragile across preview/production domains, with frequent `401`s tied to per-domain whitelisting). **This specific part hasn't been independently confirmed against the actual frontend code** — every `BengaluruMap.jsx` reviewed so far still imports and initializes `mappls` directly, not MapLibre. If the migration is done, this section is accurate; if it's still planned, treat this diagram as the target architecture and double check `BengaluruMap.jsx` before assuming the frontend needs no map key.
 
 The frontend pulls data over REST for one-off requests (forecasts, tactical plans, diversion routes, copilot orders) and stays subscribed to the WebSocket for push alerts (surge, OSINT, CCTV) without polling. The Learning Engine isn't driven by the frontend at all; it runs on its own schedule in the background and feeds corrected calibration back into future forecasts.
 
@@ -232,6 +232,8 @@ uvicorn main:app --reload --port 8000
 celery -A tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
+Double-check the variable name in `tasks.py` before running this — the documented Celery code instantiates it as `app = Celery("traffic_tasks", ...)`, which would make the correct command `celery -A tasks.app worker`, not `tasks.celery_app`. Use whichever name `tasks.py` actually defines.
+
 `--pool=solo` is required on Windows, since Celery's default prefork pool relies on `fork()`, which isn't available there. On macOS/Linux you can drop it for better concurrency.
 
 On first boot, the Data Foundation module loads the CSV and computes all derived statistics automatically. Train the forecasting models once data is loaded:
@@ -272,7 +274,7 @@ Create `frontend/.env.local`:
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-No commercial map API key is needed here — the dashboard renders on open-source MapLibre GL JS against public CartoDB tiles, not a keyed SDK.
+No commercial map API key is needed here **if** the MapLibre migration described in the architecture section is actually live in `BengaluruMap.jsx` — unconfirmed as of this writing, see the note above.
 
 By default Vite serves on `http://localhost:5173`.
 
@@ -317,7 +319,7 @@ CI runs the same Testcontainers-backed PostgreSQL instance inside GitHub Actions
 | Backend (API + Celery workers) | Containerized (Railway / AWS ECS) | Stateless ASGI pods behind a load balancer; Celery workers run as a separate process from the same image. |
 | Data layer | Managed PostgreSQL 15 + Redis | Redis backs both the Celery broker and the WebSocket pub/sub fan-out. |
 
-The routing graph is the one piece that doesn't fit a small container out of the box: parsing the raw 50MB GraphML file at startup spikes memory to roughly 1.5GB, enough to OOM-kill a 500MB container. Pre-compiling it locally into a binary pickle and deserializing that at boot instead drops both startup time (32s → under 1s) and memory footprint (1.5GB → ~150MB) enough to run comfortably on cheap container hardware.
+The routing graph is the one piece that doesn't fit a small container out of the box: parsing the raw 50MB GraphML file at startup spikes memory to roughly 1.5GB, enough to OOM-kill a 500MB container. Pre-compiling it locally into a binary pickle and deserializing that at boot instead drops both startup time (32s → under 0.4s) and memory footprint (1.5GB → ~150MB) enough to run comfortably on cheap container hardware.
 
 ## Demo / hackathon notes
 

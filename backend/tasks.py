@@ -2,11 +2,12 @@
 Distributed Task Queue Worker for Gridlock.
 Maintains a single persistent event loop across tasks to prevent connection pool fragmentation.
 Handles both CCTV Ingestion and AI Copilot Orchestration.
-Configured for dynamic Cloud Deployment environments.
+Configured for dynamic Cloud Deployment environments and robust data serialization.
 """
 import os
 import asyncio
 import logging
+from datetime import datetime
 from celery import Celery
 
 # Import your CCTV service
@@ -14,7 +15,7 @@ from modules.cctv_ingestion.service import process_cctv_payload
 
 logger = logging.getLogger(__name__)
 
-# 1. FIX FOR DEPLOYMENT: Dynamically pull your production Redis URL.
+# 1. ENVIRONMENT CONFIGURATION: Dynamically pull your production Redis URL.
 # If REDIS_URL is not found in the environment, it falls back to your local setup automatically.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -24,10 +25,10 @@ celery_app = Celery(
     backend=REDIS_URL
 )
 
-# Optional cloud optimizations for Celery over a network
+# Network and resource optimizations for cloud deployments
 celery_app.conf.update(
     broker_connection_retry_on_startup=True,
-    result_expires=3600,  # Clear out completed tasks from Redis after 1 hour to save memory
+    result_expires=3600,  # Clear out completed task metadata from Redis after 1 hour to save memory
 )
 
 # Global tracker for the worker loop lifecycle
@@ -50,8 +51,6 @@ def get_worker_event_loop():
 # ==========================================
 # TASK 1: CCTV INGESTION
 # ==========================================
-# FIX: Explicitly naming it "tasks.process_cctv_task" so send_task works flawlessly 
-# across separate microservice containers or routers in production.
 @celery_app.task(name="tasks.process_cctv_task", rate_limit="15/m", max_retries=3, default_retry_delay=10)
 def process_cctv_task(raw_payload: dict):
     """Executes ingestion using run_until_complete to keep connection states alive."""
@@ -73,16 +72,25 @@ def generate_copilot_order_task(self, request_data: dict):
     """
     Celery task that orchestrates all Intelligence Modules safely in the background.
     """
+    # CRITICAL FIX: Convert the incoming string format back into a robust datetime object
+    # This prevents runtime attribute crashes when the down-stream modules look for .hour or .weekday()
+    if isinstance(request_data.get("event_datetime"), str):
+        try:
+            request_data["event_datetime"] = datetime.fromisoformat(request_data["event_datetime"])
+        except ValueError:
+            logger.warning("[Worker] event_datetime was not in standard ISO format. Attempting parsing fallback...")
+            request_data["event_datetime"] = datetime.strptime(request_data["event_datetime"], "%Y-%m-%d %H:%M:%S")
+
     loop = get_worker_event_loop()
     
     async def run_intelligence_pipeline():
-        # Import inside the function to prevent circular dependency issues at boot
+        # Import inside the function to prevent circular dependency issues at boot time
         from modules.ai_copilot import service as copilot_service
         from modules.routing_engine.service import calculate_tactical_diversion
         from modules.resource_recommender.service import optimize_manpower
         from modules.compound_conflict.service import detect_conflict
 
-        logger.info(f"[Worker] Starting AI Copilot analysis for {request_data.get('corridor')}")
+        logger.info(f"[Worker] Starting AI Copilot analysis for corridor: {request_data.get('corridor')}")
 
         # 1. Generate the LLM Text Operational Report via Gemini
         order_text = await copilot_service.generate_operational_order(

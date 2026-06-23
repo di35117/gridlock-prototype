@@ -19,7 +19,7 @@ export default function BengaluruMap() {
   const [mapInstance, setMapInstance] = useState(null);
   const mapContainerRef = useRef(null);
 
-  // 1. Initial Data Fetch for Road Metrics (Heatmap Data)
+  // 1. Initial Data Fetch for Road Metrics
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -51,50 +51,40 @@ export default function BengaluruMap() {
     });
 
     map.on("load", () => {
-      // A. Setup Base Heatmap Layer (Restored!)
+      // A. Setup Base Road Metrics Layer (The Glowing ML Heatmap)
       map.addSource("heatmap-source", {
         type: "geojson",
-        data: { type: "FeatureCollection", features: [] }, // Injects data dynamically later
+        data: { type: "FeatureCollection", features: [] },
       });
+
       map.addLayer({
-        id: "risk-heatmap-layer",
-        type: "heatmap",
+        id: "road-metrics-layer",
+        type: "line",
         source: "heatmap-source",
-        maxzoom: 15,
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
         paint: {
-          "heatmap-weight": 1,
-          "heatmap-intensity": [
+          // Adjust "risk_score" if your backend uses a different metric name!
+          "line-color": [
             "interpolate",
             ["linear"],
-            ["zoom"],
+            ["get", "risk_score"],
             0,
-            1,
-            15,
-            3,
+            "rgba(255, 235, 59, 0.1)", // Faint transparent yellow
+            50,
+            "rgba(255, 152, 0, 0.6)", // Glowing orange
+            100,
+            "rgba(244, 67, 54, 0.9)", // Intense red
           ],
-          "heatmap-color": [
-            "interpolate",
-            ["linear"],
-            ["heatmap-density"],
-            0,
-            "rgba(33,102,172,0)",
-            0.2,
-            "rgb(103,169,207)",
-            0.4,
-            "rgb(209,229,240)",
-            0.6,
-            "rgb(253,219,199)",
-            0.8,
-            "rgb(239,138,98)",
-            1,
-            "rgb(178,24,43)",
-          ],
-          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 15, 20],
-          "heatmap-opacity": 0.7,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 15, 8],
+          "line-blur": 4,
+          "line-opacity": 0.85,
         },
       });
 
-      // B. Setup Diversion Routing Line Layer
+      // B. Setup Tactical Diversion Routing Line Layer
       map.addSource("tactical-diversion-source", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -126,6 +116,62 @@ export default function BengaluruMap() {
           "circle-stroke-width": 2,
           "circle-stroke-color": "#030712",
         },
+      });
+
+      // ==========================================
+      // INTERACTIVITY: Click to reveal ML Metrics
+      // ==========================================
+
+      // Change cursor to pointer when hovering over a recorded road
+      map.on("mouseenter", "road-metrics-layer", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "road-metrics-layer", () => {
+        map.getCanvas().style.cursor = "";
+      });
+
+      // Click event handler
+      map.on("click", "road-metrics-layer", (e) => {
+        const feature = e.features[0];
+        if (!feature || !feature.properties) return;
+
+        const props = feature.properties;
+        const corridor = props.corridor || props.name || "Unknown Link";
+
+        // Parse numericals safely (Adjust property keys based on what your backend sends)
+        const riskScore = props.risk_score
+          ? Number(props.risk_score).toFixed(1)
+          : "N/A";
+        const riskColor =
+          riskScore > 75
+            ? "text-red-400"
+            : riskScore > 40
+              ? "text-orange-400"
+              : "text-green-400";
+
+        // Build a raw HTML string styled with Tailwind classes for the MapLibre Popup
+        const popupHtml = `
+          <div style="background-color: #111827; padding: 12px; border-radius: 6px; border: 1px solid #374151; min-width: 180px;">
+            <h4 style="color: #60A5FA; font-family: monospace; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #374151; padding-bottom: 4px; font-size: 12px; text-transform: uppercase;">
+              ${corridor}
+            </h4>
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px; font-family: monospace; font-size: 11px;">
+              <span style="color: #9CA3AF;">Risk Score:</span>
+              <span class="${riskColor}" style="font-weight: bold; text-align: right;">${riskScore}</span>
+              
+              <span style="color: #9CA3AF;">Congestion:</span>
+              <span style="color: #D1D5DB; text-align: right;">${props.congestion_level || props.congestion || "Normal"}</span>
+              
+              <span style="color: #9CA3AF;">ML Weight:</span>
+              <span style="color: #D1D5DB; text-align: right;">${props.weight ? Number(props.weight).toFixed(2) : "1.00"}</span>
+            </div>
+          </div>
+        `;
+
+        new maplibregl.Popup({ closeButton: false, className: "cyber-popup" })
+          .setLngLat(e.lngLat)
+          .setHTML(popupHtml)
+          .addTo(map);
       });
 
       setIsMapLoading(false);
@@ -208,6 +254,20 @@ export default function BengaluruMap() {
 
   return (
     <div className="w-full h-full relative bg-gray-950 overflow-hidden">
+      {/* Optional CSS snippet to remove the ugly white background from default MapLibre popups.
+        Because MapLibre mounts popups directly to the DOM body, we have to use global CSS overrides here.
+      */}
+      <style>{`
+        .cyber-popup .maplibregl-popup-content {
+          background: transparent !important;
+          padding: 0 !important;
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3) !important;
+        }
+        .cyber-popup .maplibregl-popup-tip {
+          border-top-color: #374151 !important; /* Matches our popup border */
+        }
+      `}</style>
+
       {isMapLoading && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-950/80 backdrop-blur-sm">
           <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-3" />

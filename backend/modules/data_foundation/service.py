@@ -88,8 +88,9 @@ def _load_and_clean_csv() -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 async def check_data_loaded() -> bool:
+    """Checks if the computed ML profiles actually exist."""
     async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT COUNT(*) FROM incidents"))
+        result = await conn.execute(text("SELECT COUNT(*) FROM corridor_risk_profiles"))
         return result.scalar() > 0
 
 
@@ -393,7 +394,27 @@ async def initialize_data_foundation() -> dict:
     }
 
 async def reload_data_foundation() -> dict:
-    """Force a full reload (used by the /reload endpoint)."""
+    """NUCLEAR OVERRIDE: Force a full reload (used by the /reload endpoint)."""
+    logger.info("Initiating NUCLEAR FORCE RELOAD...")
+    
     async with engine.begin() as conn:
+        # Wipe all ML and data tables completely clean
         await conn.execute(text("TRUNCATE TABLE incidents CASCADE"))
-    return await initialize_data_foundation()
+        await conn.execute(text("TRUNCATE TABLE corridor_risk_profiles CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE station_corridor_mapping CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE event_cause_stats CASCADE"))
+
+    # Bypass the 'check_data_loaded' trap entirely and force the data ingestion
+    df = _load_and_clean_csv()
+    logger.info(f"CSV forcefully read: {len(df)} rows")
+
+    n = await _load_incidents(df)
+    await _compute_corridor_profiles(df)
+    await _compute_station_mapping(df)
+    await _compute_event_cause_stats(df)
+
+    logger.info("Nuclear reload complete. ML Profiles populated.")
+    return {
+        "status": "force_reloaded_successfully",
+        "incidents_loaded": n,
+    }

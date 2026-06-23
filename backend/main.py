@@ -1,4 +1,3 @@
-# backend/main.py
 """
 BTP Event Intelligence Platform — FastAPI entry point.
 Boots the data foundation, trains the ML forecaster, and exposes all operational endpoints.
@@ -37,8 +36,10 @@ from modules.learning_engine.router import router as learning_engine_router
 from modules.learning_engine.service import autonomous_event_learning_scan
 from modules.routing_engine.router import router as routing_engine_router
 from modules.osint_harvester.router import router as osint_harvester_router
-from modules.websockets.router import router as websocket_router 
 from modules.cctv_ingestion.router import router as cctv_ingestion_router
+
+# FIX: Import the WebSocket router
+from modules.websockets.router import router as websocket_router 
 
 scheduler = AsyncIOScheduler()
 
@@ -99,6 +100,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register all built modules
 app.include_router(data_foundation_router)
 app.include_router(impact_forecaster_router)
 app.include_router(compound_conflict_router)
@@ -108,5 +110,7 @@ app.include_router(routing_engine_router)
 app.include_router(learning_engine_router)
 app.include_router(ai_copilot_router)
 app.include_router(osint_harvester_router)
-app.include_router(websocket_router) 
 app.include_router(cctv_ingestion_router)
+
+# FIX: Mount the WebSocket router to the main app instance
+app.include_router(websocket_router)

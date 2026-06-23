@@ -14,10 +14,10 @@ export const SAFE_API_URL = (() => {
   return url.endsWith("/") ? url.slice(0, -1) : url;
 })();
 
-// Automatically convert the secure or standard http protocol into sockets cleanly
+// FIX 1: Changed "/api/ws/live" to "/api/stream/live" to match your backend router
 const WS_URL =
   SAFE_API_URL.replace("https://", "wss://").replace("http://", "ws://") +
-  "/api/ws/live";
+  "/api/stream/live";
 
 let ws = null;
 
@@ -37,6 +37,7 @@ export const connectSystemWebSocket = () => {
       // 2. Automated Trigger Condition: Capture active alerts or anomalies
       if (
         data.type === "TRAFFIC_SURGE" ||
+        data.type === "SURGE_ALERT" ||
         data.type === "CCTV_ANOMALY" ||
         data.risk_level === "Critical" ||
         data.risk_level === "High"
@@ -45,14 +46,15 @@ export const connectSystemWebSocket = () => {
         store.triggerSurgeResponse(data);
 
         try {
-          logger.info(
+          // FIX 2: Changed "logger.info" to standard JS "console.log" to prevent browser crash
+          console.log(
             "[WebSocket] Initiating AI Copilot execution payload submission...",
           );
 
           // Map incoming websocket schema fields into standard Copilot request parameters
           const requestPayload = {
             event_cause: data.event_cause || "traffic_congestion",
-            corridor: data.corridor || "unknown_corridor",
+            corridor: data.corridor || "Mysore Road",
             expected_crowd: parseInt(data.expected_crowd || 1200, 10),
             event_details:
               data.message || "Automated threshold anomaly trigger.",

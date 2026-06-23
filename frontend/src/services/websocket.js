@@ -1,24 +1,22 @@
-// src/services/websocket.js
 import { useSystemStore } from "../store/useSystemStore";
 
-// Pulls from Vercel in production, or defaults to localhost in development
-const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const RAW_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-// DEFENSIVE FIX: If the protocol is missing from the env variable, patch it manually
-let absoluteApiUrl = API_URL;
-if (
-  !absoluteApiUrl.startsWith("http://") &&
-  !absoluteApiUrl.startsWith("https://")
-) {
-  absoluteApiUrl =
-    absoluteApiUrl.includes("localhost") || absoluteApiUrl.includes("127.0.0.1")
-      ? `http://${absoluteApiUrl}`
-      : `https://${absoluteApiUrl}`;
-}
+// CENTRALIZED DEFENSIVE LAYER: Forces absolute protocols and cleans trailing slashes
+export const SAFE_API_URL = (() => {
+  let url = RAW_URL.trim();
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url =
+      url.includes("localhost") || url.includes("127.0.0.1")
+        ? `http://${url}`
+        : `https://${url}`;
+  }
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+})();
 
-// FIX: Magically swaps https:// for wss:// and points to the correct backend route
+// Automatically convert the secure or standard http protocol into sockets cleanly
 const WS_URL =
-  absoluteApiUrl.replace("https://", "wss://").replace("http://", "ws://") +
+  SAFE_API_URL.replace("https://", "wss://").replace("http://", "ws://") +
   "/api/ws/dashboard";
 
 let ws = null;
@@ -29,50 +27,79 @@ export const connectSystemWebSocket = () => {
   ws = new WebSocket(WS_URL);
 
   ws.onmessage = async (event) => {
-    const data = JSON.parse(event.data);
-    const store = useSystemStore.getState();
+    try {
+      const data = JSON.parse(event.data);
+      const store = useSystemStore.getState();
 
-    // 1. Send all telemetry to the Intel Feed component
-    store.addIntelAlert(data);
+      // 1. Log every telemetry point directly into the Live Feed component
+      store.addIntelAlert(data);
 
-    // 2. Evaluate if this requires an automated Copilot response
-    if (
-      data.type === "TRAFFIC_SURGE" ||
-      data.type === "CRITICAL_ALERT" ||
-      data.type === "CCTV_ANOMALY"
-    ) {
+      // 2. Automated Trigger Condition: Capture active alerts or anomalies
       if (
-        data.ui_action === "TRIGGER_SIREN_AND_SNAP_MAP" ||
-        data.type === "TRAFFIC_SURGE"
+        data.type === "TRAFFIC_SURGE" ||
+        data.type === "CCTV_ANOMALY" ||
+        data.risk_level === "Critical" ||
+        data.risk_level === "High"
       ) {
-        // Trigger UI animations
-        store.triggerSurgeResponse(data.payload || data);
+        // Refocus dashboard UI and trigger global processing state instantly
+        store.triggerSurgeResponse(data);
 
         try {
-          // FIX: Use 'absoluteApiUrl' to guarantee 'https://' is attached
-          const res = await fetch(`${absoluteApiUrl}/api/copilot/generate`, {
+          logger.info(
+            "[WebSocket] Initiating AI Copilot execution payload submission...",
+          );
+
+          // Map incoming websocket schema fields into standard Copilot request parameters
+          const requestPayload = {
+            event_cause: data.event_cause || "traffic_congestion",
+            corridor: data.corridor || "unknown_corridor",
+            expected_crowd: parseInt(data.expected_crowd || 1200, 10),
+            event_details:
+              data.message || "Automated threshold anomaly trigger.",
+            event_datetime: new Date().toISOString(),
+            latitude: parseFloat(data.latitude || 12.9716),
+            longitude: parseFloat(data.longitude || 77.5946),
+          };
+
+          // POST request to Celery hand-off endpoint (Guaranteed 200ms quick response)
+          const response = await fetch(`${SAFE_API_URL}/api/copilot/generate`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ event_id: data.id || data.event_id }),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestPayload),
           });
 
-          // Guard against HTML error pages (404s/502s) before parsing JSON
-          if (!res.ok) {
-            throw new Error(`Copilot API failed with status: ${res.status}`);
+          // Defensive HTML response check to intercept 404/502 custom web pages before JSON parsing crashes
+          const contentType = response.headers.get("content-type");
+          if (
+            !response.ok ||
+            !contentType ||
+            !contentType.includes("application/json")
+          ) {
+            const errorText = await response.text();
+            throw new Error(
+              `Server returned invalid response structure. Status: ${response.status}. Snippet: ${errorText.slice(0, 50)}`,
+            );
           }
 
-          const executionData = await res.json();
+          const taskData = await response.json();
+          const targetTaskId = taskData.task_id;
 
-          // Poll Celery/Redis for the status of the background task
-          let pollInterval = setInterval(async () => {
+          // 3. BACKGROUND TASK POLLING METRIC: Poll the task status until complete
+          const pollInterval = setInterval(async () => {
             try {
-              // FIX: Use 'absoluteApiUrl' for polling as well
-              const statusRes = await fetch(
-                `${absoluteApiUrl}/api/copilot/status/${executionData.task_id}`,
+              const statusResponse = await fetch(
+                `${SAFE_API_URL}/api/copilot/status/${targetTaskId}`,
               );
 
-              if (!statusRes.ok) throw new Error("Status poll failed");
-              const statusData = await statusRes.json();
+              if (!statusResponse.ok) {
+                throw new Error(
+                  `Status polling network anomaly: ${statusResponse.status}`,
+                );
+              }
+
+              const statusData = await statusResponse.json();
 
               if (statusData.status === "completed") {
                 clearInterval(pollInterval);
@@ -82,7 +109,7 @@ export const connectSystemWebSocket = () => {
                   finalBarricades = Object.values(statusData.barricades);
                 }
 
-                // Push final tactical data to the UI map and Markdown renderer
+                // Hydrate the store with the completed background metrics
                 store.resolveSurgeResponse(
                   statusData.operational_order,
                   finalBarricades,
@@ -93,7 +120,7 @@ export const connectSystemWebSocket = () => {
               } else if (statusData.status === "failed") {
                 clearInterval(pollInterval);
                 store.resolveSurgeResponse(
-                  "Tactical operational plan creation failed.",
+                  "⚠️ Asynchronous tactical operational plan compilation failed on worker thread.",
                   [],
                   null,
                   null,
@@ -106,12 +133,19 @@ export const connectSystemWebSocket = () => {
                 pollErr,
               );
               clearInterval(pollInterval);
+              store.resolveSurgeResponse(
+                "⚠️ Target background tracking task became unreachable.",
+                [],
+                null,
+                null,
+                null,
+              );
             }
           }, 2000);
         } catch (error) {
           console.error("Automated Copilot execution failed:", error);
           store.resolveSurgeResponse(
-            "Failed to connect to AI Copilot service.",
+            `Failed to communicate with AI Copilot service: ${error.message}`,
             [],
             null,
             null,
@@ -119,11 +153,13 @@ export const connectSystemWebSocket = () => {
           );
         }
       }
+    } catch (parseErr) {
+      console.error("Malformed root websocket event frame dropped:", parseErr);
     }
   };
 
   ws.onclose = () => {
     ws = null;
-    setTimeout(connectSystemWebSocket, 3000); // Trigger auto-reconnect fallback loop
+    setTimeout(connectSystemWebSocket, 3000); // Trigger clean auto-reconnect tracking loop
   };
 };

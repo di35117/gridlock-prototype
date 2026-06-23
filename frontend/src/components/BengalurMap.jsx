@@ -19,7 +19,7 @@ export default function BengaluruMap() {
   const [mapInstance, setMapInstance] = useState(null);
   const mapContainerRef = useRef(null);
 
-  // 1. Initial Data Fetch
+  // 1. Initial Data Fetch for Road Metrics (Heatmap Data)
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -38,7 +38,7 @@ export default function BengaluruMap() {
     fetchMetrics();
   }, [setRoadMetrics]);
 
-  // 2. Instantiate Map
+  // 2. Instantiate Map & Base Layers
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -51,7 +51,50 @@ export default function BengaluruMap() {
     });
 
     map.on("load", () => {
-      // Setup empty sources/layers immediately on load so we can update them efficiently later
+      // A. Setup Base Heatmap Layer (Restored!)
+      map.addSource("heatmap-source", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] }, // Injects data dynamically later
+      });
+      map.addLayer({
+        id: "risk-heatmap-layer",
+        type: "heatmap",
+        source: "heatmap-source",
+        maxzoom: 15,
+        paint: {
+          "heatmap-weight": 1,
+          "heatmap-intensity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            0,
+            1,
+            15,
+            3,
+          ],
+          "heatmap-color": [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(33,102,172,0)",
+            0.2,
+            "rgb(103,169,207)",
+            0.4,
+            "rgb(209,229,240)",
+            0.6,
+            "rgb(253,219,199)",
+            0.8,
+            "rgb(239,138,98)",
+            1,
+            "rgb(178,24,43)",
+          ],
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 15, 20],
+          "heatmap-opacity": 0.7,
+        },
+      });
+
+      // B. Setup Diversion Routing Line Layer
       map.addSource("tactical-diversion-source", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -68,7 +111,7 @@ export default function BengaluruMap() {
         },
       });
 
-      // GPU-optimized Point Layer for Barricades
+      // C. Setup GPU-Optimized Barricades Layer
       map.addSource("barricades-source", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -79,9 +122,9 @@ export default function BengaluruMap() {
         source: "barricades-source",
         paint: {
           "circle-radius": 8,
-          "circle-color": "#eab308", // Yellow color tailing Tailwind yellow-500
+          "circle-color": "#eab308",
           "circle-stroke-width": 2,
-          "circle-stroke-color": "#030712", // Dark outline
+          "circle-stroke-color": "#030712",
         },
       });
 
@@ -92,11 +135,20 @@ export default function BengaluruMap() {
     return () => map.remove();
   }, []);
 
-  // 3. Ultra-Fast GPU Data Layer Mutation Tier (No renderToStaticMarkup or DOM leaks)
+  // 3. Update Heatmap when roadMetrics state changes
+  useEffect(() => {
+    if (!mapInstance || !roadMetrics || isMapLoading) return;
+    const source = mapInstance.getSource("heatmap-source");
+    if (source) {
+      source.setData(roadMetrics);
+    }
+  }, [roadMetrics, mapInstance, isMapLoading]);
+
+  // 4. Update Tactical Routing & Barricades when Copilot finishes
   useEffect(() => {
     if (!mapInstance || isMapLoading) return;
 
-    // A. Update Vector Diversion Routing
+    // Tactical Diversion Update
     const diversionSource = mapInstance.getSource("tactical-diversion-source");
     if (diversionSource) {
       if (diversions && diversions.coordinates) {
@@ -106,7 +158,6 @@ export default function BengaluruMap() {
           mapInstance.flyTo({ center: firstCoord, zoom: 14, speed: 1.0 });
         }
       } else {
-        // Reset layer cleanly if nothing is available
         diversionSource.setData({ type: "FeatureCollection", features: [] });
         if (activeSurge && activeSurge.longitude) {
           mapInstance.flyTo({
@@ -118,7 +169,7 @@ export default function BengaluruMap() {
       }
     }
 
-    // B. Map Barricade point Arrays cleanly to standard GeoJSON features array
+    // Barricades Layer Update
     const barricadesSource = mapInstance.getSource("barricades-source");
     if (barricadesSource) {
       if (barricades && barricades.length > 0) {

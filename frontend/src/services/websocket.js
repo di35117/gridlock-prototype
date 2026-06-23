@@ -1,4 +1,3 @@
-// src/services/websocket.js
 import { useSystemStore } from "../store/useSystemStore";
 
 // Pulls from Vercel in production, or defaults to localhost in development
@@ -36,25 +35,40 @@ export const connectSystemWebSocket = () => {
     store.addIntelAlert(data);
 
     // 2. Evaluate if event critical criteria triggers Copilot actions
+    // BUG 2 FIX: Added "SURGE_ALERT" so the daemon triggers the Copilot
     if (
       data.type === "TRAFFIC_SURGE" ||
+      data.type === "SURGE_ALERT" ||
       data.type === "CRITICAL_ALERT" ||
       data.type === "CCTV_ANOMALY"
     ) {
       if (
         data.ui_action === "TRIGGER_SIREN_AND_SNAP_MAP" ||
-        data.type === "TRAFFIC_SURGE"
+        data.type === "TRAFFIC_SURGE" ||
+        data.type === "SURGE_ALERT"
       ) {
         store.triggerSurgeResponse(data.payload || data);
 
         try {
           const API_BASE =
             import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-          const res = await fetch(`${API_BASE}/api/copilot/execute`, {
+
+          // BUG 1 FIX: Corrected endpoint path to /api/copilot/generate
+          const res = await fetch(`${API_BASE}/api/copilot/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ event_id: data.id || data.event_id }),
+            // BUG 1 FIX: Corrected payload schema to match backend Pydantic model
+            body: JSON.stringify({
+              event_cause: data.event_cause || data.corridor || "public_event",
+              corridor: data.corridor || "Mysore Road",
+              expected_crowd: data.expected_crowd || 1000,
+              event_details: data.message || "",
+              event_datetime: new Date().toISOString(),
+              latitude: parseFloat(data.latitude || 12.9716),
+              longitude: parseFloat(data.longitude || 77.5946),
+            }),
           });
+
           const executionData = await res.json();
 
           let pollInterval = setInterval(async () => {

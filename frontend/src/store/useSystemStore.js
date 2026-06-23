@@ -11,7 +11,7 @@ export const useSystemStore = create(
       barricades: [],
       diversions: null,
       resources: null,
-      compoundThreats: null, // <-- ADDED: Holds infrastructure math
+      compoundThreats: null,
       isProcessing: false,
 
       setRoadMetrics: (data) => set({ roadMetrics: data }),
@@ -37,17 +37,17 @@ export const useSystemStore = create(
         barricadeData,
         diversionData,
         resourceData,
-        threatData, // <-- ADDED
+        threatData,
       ) =>
         set({
           copilotOrder: copilotText,
           barricades: barricadeData,
           diversions: diversionData,
           resources: resourceData,
-          compoundThreats: threatData || null, // <-- ADDED
+          compoundThreats: threatData,
           isProcessing: false,
         }),
     }),
-    { name: "btp-command-storage" },
+    { name: "gridlock-system-store" },
   ),
 );

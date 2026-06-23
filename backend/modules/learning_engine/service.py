@@ -9,7 +9,7 @@ import random
 import json
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timezone  # <-- ADDED timezone
 import redis.asyncio as redis
 
 # NEW IMPORTS FOR DB SYNC
@@ -155,7 +155,8 @@ async def autonomous_event_learning_scan():
     
     try:
         keys = await redis_client.keys("active_event:*")
-        now = datetime.now()
+        # FIX: Ensure "now" is timezone-aware (UTC) to prevent comparison crashes
+        now = datetime.now(timezone.utc)
         tasks = []
         
         for key in keys:
@@ -165,6 +166,10 @@ async def autonomous_event_learning_scan():
                 
             event_data = json.loads(event_data_str)
             end_time = datetime.fromisoformat(event_data["expected_end_time"])
+            
+            # FIX: If the parsed ISO string doesn't have a timezone, force it to UTC
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
             
             if now >= end_time:
                 # PRODUCTION SCALE FIX: Schedule concurrent execution tasks safely

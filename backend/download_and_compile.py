@@ -1,56 +1,57 @@
 import osmnx as ox
+import networkx as nx
 import pickle
-import logging
 import os
+import logging
+import time
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Set up logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
-# The target city (OSMnx will geocode this and draw a boundary box)
+# Constants
 PLACE_NAME = "Bengaluru, Karnataka, India"
-
-# Define where you want the files to land (matches your config.py defaults)
 DATA_DIR = "data"
-BINARY_PICKLE_PATH = f"{DATA_DIR}/bengaluru_network.pkl"
-GRAPHML_BACKUP_PATH = f"{DATA_DIR}/bengaluru_network.graphml"
+PKL_FILENAME = "bengaluru_network.pkl"
 
-def download_and_compile_graph():
-    logger.info("==================================================")
-    logger.info(f"🚀 STARTING LIVE DOWNLOAD: {PLACE_NAME}")
-    logger.info("==================================================")
-    
-    # Create the data directory if it doesn't exist so we don't get a FileNotFoundError
+def compile_bengaluru_graph():
+    """
+    Downloads the Bengaluru road network and saves it DIRECTLY to a binary .pkl file,
+    skipping the bulky .graphml intermediate file to save disk space and Git bandwidth.
+    """
+    logger.info(f"Starting direct-to-binary compilation for: {PLACE_NAME}")
+    start_time = time.time()
+
+    # 1. Ensure the data directory exists
     os.makedirs(DATA_DIR, exist_ok=True)
+    pkl_path = os.path.join(DATA_DIR, PKL_FILENAME)
 
+    # 2. Download the graph directly into RAM
+    logger.info("Downloading road network from OpenStreetMap (this may take 2-3 minutes)...")
     try:
-        logger.info(f"Step 1: Downloading live 'drive' network from OpenStreetMap...")
-        logger.info("⏳ Please be patient! Downloading a massive city takes 2-5 minutes...")
-        
-        # This is the magic line that fetches the live road data. 
-        # network_type="drive" ensures we only get roads cars can actually drive on.
+        # network_type="drive" ensures we only get roads cars can drive on
         G = ox.graph_from_place(PLACE_NAME, network_type="drive", simplify=True)
-        
-        node_count = len(G.nodes)
-        edge_count = len(G.edges)
-        logger.info(f"✅ Download complete! (Nodes: {node_count}, Edges: {edge_count})")
-        
-        logger.info("Step 2: Saving a .graphml backup just in case...")
-        ox.save_graphml(G, GRAPHML_BACKUP_PATH)
-        
-        logger.info("Step 3: Compiling directly to binary (.pkl)...")
-        # HIGHEST_PROTOCOL creates the fastest and smallest binary file
-        with open(BINARY_PICKLE_PATH, 'wb') as f:
-            pickle.dump(G, f, pickle.HIGHEST_PROTOCOL)
-            
-        file_size_mb = os.path.getsize(BINARY_PICKLE_PATH) / (1024 * 1024)
-        logger.info(f"✅ Success! Binary graph generated ({file_size_mb:.2f} MB).")
-        logger.info("Your routing engine is ready to go.")
-        
+        logger.info(f"Download complete. Graph contains {len(G.nodes)} nodes and {len(G.edges)} edges.")
     except Exception as e:
-        logger.error(f"❌ Failed to download or compile graph: {e}")
-        logger.error("If it timed out, OSM servers might be under heavy load. Try again in a minute.")
+        logger.error(f"Failed to download graph from OSM: {e}")
+        return
+
+    # 3. Add travel times to the edges (crucial for shortest-path routing)
+    logger.info("Imputing speeds and calculating edge travel times...")
+    G = ox.add_edge_speeds(G)
+    G = ox.add_edge_travel_times(G)
+
+    # 4. Save directly to the binary pickle format (Skip GraphML entirely)
+    logger.info(f"Serializing graph directly to {pkl_path}...")
+    try:
+        with open(pkl_path, "wb") as f:
+            pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        file_size_mb = os.path.getsize(pkl_path) / (1024 * 1024)
+        logger.info(f"Success! Binary graph saved. File size: {file_size_mb:.2f} MB")
+        logger.info(f"Total compilation time: {time.time() - start_time:.2f} seconds.")
+    except Exception as e:
+        logger.error(f"Failed to save binary graph: {e}")
 
 if __name__ == "__main__":
-    download_and_compile_graph()
+    compile_bengaluru_graph()

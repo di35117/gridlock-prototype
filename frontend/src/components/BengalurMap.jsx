@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { renderToStaticMarkup } from "react-dom/server";
 import { useSystemStore } from "../store/useSystemStore";
 import { SAFE_API_URL } from "../services/websocket";
-import { ShieldAlert, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 export default function BengaluruMap() {
   const {
@@ -19,9 +18,8 @@ export default function BengaluruMap() {
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapInstance, setMapInstance] = useState(null);
   const mapContainerRef = useRef(null);
-  const markersRef = useRef([]);
 
-  // 1. Initial Data Foundation Network Load
+  // 1. Initial Data Fetch
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -40,7 +38,7 @@ export default function BengaluruMap() {
     fetchMetrics();
   }, [setRoadMetrics]);
 
-  // 2. Instantiating Map Instance
+  // 2. Instantiate Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -53,44 +51,16 @@ export default function BengaluruMap() {
     });
 
     map.on("load", () => {
-      setIsMapLoading(false);
-      setMapInstance(map);
-    });
-
-    return () => map.remove();
-  }, []);
-
-  // 3. Dynamic Tactical Vector Overlays & Barricades Drawing Execution
-  useEffect(() => {
-    if (!mapInstance || isMapLoading) return;
-
-    // Flush older HTML markers out safely
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
-
-    // Clear dynamic diversion vector source routing routes if they exist from a past run
-    if (mapInstance.getLayer("tactical-diversion-layer")) {
-      mapInstance.removeLayer("tactical-diversion-layer");
-    }
-    if (mapInstance.getSource("tactical-diversion-source")) {
-      mapInstance.removeSource("tactical-diversion-source");
-    }
-
-    // A. Render Routing GeoJSON
-    if (diversions && diversions.coordinates) {
-      mapInstance.addSource("tactical-diversion-source", {
+      // Setup empty sources/layers immediately on load so we can update them efficiently later
+      map.addSource("tactical-diversion-source", {
         type: "geojson",
-        data: diversions,
+        data: { type: "FeatureCollection", features: [] },
       });
-
-      mapInstance.addLayer({
+      map.addLayer({
         id: "tactical-diversion-layer",
         type: "line",
         source: "tactical-diversion-source",
-        layout: {
-          "line-join": "round",
-          "line-cap": "round",
-        },
+        layout: { "line-join": "round", "line-cap": "round" },
         paint: {
           "line-color": "#3b82f6",
           "line-width": 5,
@@ -98,54 +68,90 @@ export default function BengaluruMap() {
         },
       });
 
-      // Recenter camera smoothly to capture the active routing plan bounds
-      const firstCoord = diversions.coordinates[0];
-      if (firstCoord) {
-        mapInstance.flyTo({ center: firstCoord, zoom: 14, speed: 1.2 });
-      }
-    } else if (activeSurge && activeSurge.longitude) {
-      // Fallback camera target focus directly onto the primary anomaly focal link point
-      mapInstance.flyTo({
-        center: [activeSurge.longitude, activeSurge.latitude],
-        zoom: 14,
-        speed: 1.0,
+      // GPU-optimized Point Layer for Barricades
+      map.addSource("barricades-source", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
       });
+      map.addLayer({
+        id: "barricades-layer",
+        type: "circle",
+        source: "barricades-source",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#eab308", // Yellow color tailing Tailwind yellow-500
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#030712", // Dark outline
+        },
+      });
+
+      setIsMapLoading(false);
+      setMapInstance(map);
+    });
+
+    return () => map.remove();
+  }, []);
+
+  // 3. Ultra-Fast GPU Data Layer Mutation Tier (No renderToStaticMarkup or DOM leaks)
+  useEffect(() => {
+    if (!mapInstance || isMapLoading) return;
+
+    // A. Update Vector Diversion Routing
+    const diversionSource = mapInstance.getSource("tactical-diversion-source");
+    if (diversionSource) {
+      if (diversions && diversions.coordinates) {
+        diversionSource.setData(diversions);
+        const firstCoord = diversions.coordinates[0];
+        if (firstCoord) {
+          mapInstance.flyTo({ center: firstCoord, zoom: 14, speed: 1.0 });
+        }
+      } else {
+        // Reset layer cleanly if nothing is available
+        diversionSource.setData({ type: "FeatureCollection", features: [] });
+        if (activeSurge && activeSurge.longitude) {
+          mapInstance.flyTo({
+            center: [activeSurge.longitude, activeSurge.latitude],
+            zoom: 14,
+            speed: 1.0,
+          });
+        }
+      }
     }
 
-    // B. Plot Dynamic Barricades Blockades
-    if (barricades && barricades.length > 0) {
-      barricades.forEach((point) => {
-        let lat, lng;
-        if (Array.isArray(point)) {
-          [lng, lat] = point;
-        } else if (point.latitude && point.longitude) {
-          lat = point.latitude;
-          lng = point.longitude;
-        } else if (point.lat && point.lng) {
-          lat = point.lat;
-          lng = point.lng;
-        }
+    // B. Map Barricade point Arrays cleanly to standard GeoJSON features array
+    const barricadesSource = mapInstance.getSource("barricades-source");
+    if (barricadesSource) {
+      if (barricades && barricades.length > 0) {
+        const features = barricades
+          .map((point) => {
+            let lat, lng;
+            if (Array.isArray(point)) {
+              [lng, lat] = point;
+            } else if (point.latitude && point.longitude) {
+              lat = point.latitude;
+              lng = point.longitude;
+            } else if (point.lat && point.lng) {
+              lat = point.lat;
+              lng = point.lng;
+            }
 
-        if (!lat || !lng) return;
+            return {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [lng, lat] },
+              properties: {},
+            };
+          })
+          .filter(
+            (f) => f.geometry.coordinates[0] && f.geometry.coordinates[1],
+          );
 
-        const el = document.createElement("div");
-        el.innerHTML = renderToStaticMarkup(
-          <div className="relative flex items-center justify-center group cursor-pointer">
-            <div className="absolute inset-0 bg-yellow-500/50 blur-md rounded-full animate-pulse"></div>
-            <div className="relative bg-gray-950 border border-yellow-500 text-yellow-500 px-2 py-1 rounded shadow-lg flex items-center gap-1 z-10">
-              <ShieldAlert size={14} />
-              <span className="text-[10px] font-mono font-bold whitespace-nowrap">
-                CLOSED
-              </span>
-            </div>
-          </div>,
-        );
-
-        const marker = new maplibregl.Marker({ element: el })
-          .setLngLat([lng, lat])
-          .addTo(mapInstance);
-        markersRef.current.push(marker);
-      });
+        barricadesSource.setData({
+          type: "FeatureCollection",
+          features: features,
+        });
+      } else {
+        barricadesSource.setData({ type: "FeatureCollection", features: [] });
+      }
     }
   }, [barricades, diversions, activeSurge, mapInstance, isMapLoading]);
 

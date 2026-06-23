@@ -70,17 +70,20 @@ async def background_generate_order(task_id: str, request: CopilotRequest):
             )
             if routing_res and routing_res.get("status") == "Optimal Diversion Found":
                 diversion_routes = routing_res.get("route_geojson")
+                # FIXED: Force the barricades into strict {lat, lon} object structures for React
                 for p in routing_res.get("barricade_points", []):
-                    if isinstance(p, dict) and p.get("lon") and p.get("lat"):
-                        formatted_barricades.append([float(p["lon"]), float(p["lat"])])
+                    if isinstance(p, dict) and "lat" in p and "lon" in p:
+                        formatted_barricades.append({"lat": float(p["lat"]), "lon": float(p["lon"])})
                     elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                        formatted_barricades.append([float(p[1]), float(p[0])])
+                        # Fallback for arrays [lat, lon]
+                        formatted_barricades.append({"lat": float(p[0]), "lon": float(p[1])})
         except Exception as e:
             logger.error(f"Routing failed: {e}")
             
         if not formatted_barricades:
             construction_coords = await _get_construction_coordinates(request.corridor)
-            formatted_barricades = [[float(c[1]), float(c[0])] for c in construction_coords if len(c) >= 2]
+            # FIXED: Also strict format the fallback blocks
+            formatted_barricades = [{"lat": float(c[0]), "lon": float(c[1])} for c in construction_coords if len(c) >= 2]
 
         # 5. Pack ALL Intelligence into the Task Store
         _TASK_STORE[task_id] = {

@@ -12,6 +12,10 @@ import aiohttp
 from datetime import datetime
 import redis.asyncio as redis
 
+# NEW IMPORTS FOR DB SYNC
+from database import AsyncSessionLocal
+from sqlalchemy import text
+
 # PRODUCTION FIX: Import FRONTEND_URL for secure whitelisting and DEMO_MODE for central configuration
 from config import REDIS_URL, MAPMYINDIA_STATIC_KEY, FRONTEND_URL, DEMO_MODE
 
@@ -115,6 +119,19 @@ async def process_learning_feedback(corridor: str, event_cause: str, predicted_r
     new_cal = (0.7 * current_cal) + (0.3 * correction)
     await redis_client.set(cal_key, str(new_cal))
     
+    # --- NEW: SYNC TO POSTGRES SO THE FRONTEND HEATMAP UPDATES! ---
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("""
+                UPDATE corridor_risk_profiles 
+                SET risk_score = LEAST(risk_score * :mult, 1.0)
+                WHERE corridor ILIKE :c
+            """), {"mult": new_cal, "c": f"%{corridor}%"})
+            await session.commit()
+            logger.info(f"Database synced. Heatmap for {corridor} will now reflect learned risk.")
+    except Exception as e:
+        logger.error(f"Failed to sync learning to Postgres DB: {e}")
+
     if new_cal > 1.05:
         insight = f"Model under-predicted. {corridor} is highly vulnerable to {event_cause}. Multiplier updated to {new_cal:.2f}x."
     elif new_cal < 0.95:

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { mappls } from "mappls-web-maps";
 import { useSystemStore } from "../store/useSystemStore";
 import { ShieldAlert, AlertTriangle, Loader2 } from "lucide-react";
 
 const MAPMYINDIA_TOKEN = import.meta.env.VITE_MAPMYINDIA_SDK_KEY;
 
-// 1. Initialize Mappls Class safely outside the component
+// Initialize Mappls Class safely outside the component
 const mapplsClassObject = new mappls();
 
 export default function BengaluruMap() {
@@ -21,6 +22,12 @@ export default function BengaluruMap() {
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapInstance, setMapInstance] = useState(null);
   const mapContainerRef = useRef(null);
+
+  // Manually track Mappls SDK Objects so we can destroy them on re-renders
+  const roadLayerRefs = useRef([]);
+  const diversionLayerRefs = useRef([]);
+  const markerRefs = useRef([]);
+  const heatmapRef = useRef(null);
 
   // Fetch metrics if WebSocket hasn't already populated them
   useEffect(() => {
@@ -44,37 +51,23 @@ export default function BengaluruMap() {
     if (!roadMetrics) fetchMetrics();
   }, [roadMetrics, setRoadMetrics]);
 
-  // 2. The Bulletproof MapmyIndia Initializer
+  // 1. Initialize Mappls Engine
   useEffect(() => {
-    if (!MAPMYINDIA_TOKEN) {
-      console.error(
-        "Missing VITE_MAPMYINDIA_SDK_KEY in environment variables.",
-      );
-      return;
-    }
+    if (!MAPMYINDIA_TOKEN) return;
 
     let mapObject = null;
-    let isCancelled = false; // Strict Mode Guard
+    let isCancelled = false;
 
-    // CRITICAL: `map: true` is mandatory to inject the actual map canvas
-    const loadOptions = {
-      map: true,
-      libraries: [],
-      plugins: [],
-    };
-
-    mapplsClassObject.initialize(MAPMYINDIA_TOKEN, loadOptions, () => {
-      // If React unmounted this component before the Mappls script finished downloading, abort.
+    mapplsClassObject.initialize(MAPMYINDIA_TOKEN, { map: true }, () => {
       if (isCancelled || !mapContainerRef.current) return;
 
       mapObject = mapplsClassObject.Map({
         id: mapContainerRef.current.id,
         properties: {
-          center: [12.9716, 77.5946], // [Latitude, Longitude]
+          center: [12.9716, 77.5946], // [lat, lng]
           zoom: 12.5,
           theme: "dark",
           zoomControl: true,
-          // Removed 'location: true' to prevent browser GPS prompt from freezing initialization
         },
       });
 
@@ -82,175 +75,156 @@ export default function BengaluruMap() {
         setMapInstance(mapObject);
         setIsMapLoading(false);
       });
-
-      mapObject.on("error", (e) => {
-        console.error("MapmyIndia Graphics Engine Error:", e);
-      });
     });
 
     return () => {
       isCancelled = true;
-      if (mapObject) {
-        mapObject.remove();
-      }
+      if (mapObject) mapObject.remove();
     };
   }, []);
 
-  // 3. Cinematic Camera Sweeps upon Emergency Events
+  // 2. Camera Sweeps using Native Mappls Methods
   useEffect(() => {
     if (activeSurge && mapInstance && !isMapLoading) {
-      mapInstance.flyTo({
-        center: [
-          activeSurge.longitude || 77.5383,
-          activeSurge.latitude || 12.9562,
-        ],
-        zoom: 16,
-        pitch: 65,
-        bearing: 25,
-        duration: 2500,
-      });
+      const lat = activeSurge.latitude || 12.9562;
+      const lng = activeSurge.longitude || 77.5383;
+
+      // Replaced Mapbox flyTo with Mappls panTo/setZoom
+      mapInstance.panTo({ lat, lng });
+      mapInstance.setZoom(15);
     }
   }, [activeSurge, mapInstance, isMapLoading]);
 
-  // 4. Map Data Layers Overlay logic
+  // 3. Discrete Layer Rendering (The Fix for Claude's Error)
   useEffect(() => {
     if (!mapInstance || isMapLoading) return;
 
-    if (roadMetrics) {
-      if (mapInstance.getSource("bengaluru-roads")) {
-        mapInstance.getSource("bengaluru-roads").setData(roadMetrics);
-      } else {
-        mapInstance.addSource("bengaluru-roads", {
-          type: "geojson",
-          data: roadMetrics,
-        });
-        mapInstance.addLayer({
-          id: "thermal-heat-layer",
-          type: "line",
-          source: "bengaluru-roads",
-          filter: [">=", ["get", "risk_score"], 0.4],
-          paint: {
-            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 15, 15, 40],
-            "line-opacity": 0.65,
-            "line-color": [
-              "interpolate",
-              ["linear"],
-              ["get", "risk_score"],
-              0.4,
-              "rgba(234, 179, 8, 0)",
-              0.6,
-              "#eab308",
-              0.8,
-              "#f97316",
-              1.0,
-              "#ef4444",
-            ],
-          },
-        });
-      }
+    // --- CLEANUP PREVIOUS LAYERS ---
+    roadLayerRefs.current.forEach((layer) => layer.remove());
+    roadLayerRefs.current = [];
+
+    diversionLayerRefs.current.forEach((layer) => layer.remove());
+    diversionLayerRefs.current = [];
+
+    markerRefs.current.forEach((marker) => marker.remove());
+    markerRefs.current = [];
+
+    if (heatmapRef.current) {
+      heatmapRef.current.remove();
+      heatmapRef.current = null;
     }
 
-    if (diversions) {
-      if (mapInstance.getSource("ai-diversions")) {
-        mapInstance.getSource("ai-diversions").setData(diversions);
-      } else {
-        mapInstance.addSource("ai-diversions", {
-          type: "geojson",
-          data: diversions,
-        });
-        mapInstance.addLayer({
-          id: "ai-route",
-          type: "line",
-          source: "ai-diversions",
-          paint: {
-            "line-color": "#3b82f6",
-            "line-width": 6,
-            "line-dasharray": [2, 2],
-            "line-opacity": isProcessing ? 0.4 : 1.0,
-          },
-        });
-      }
-    } else {
-      if (mapInstance.getLayer("ai-route")) mapInstance.removeLayer("ai-route");
-      if (mapInstance.getSource("ai-diversions"))
-        mapInstance.removeSource("ai-diversions");
+    // --- DRAW ROAD METRICS (Polylines instead of Mapbox Data-Driven Layers) ---
+    if (roadMetrics && roadMetrics.features) {
+      roadMetrics.features.forEach((feature) => {
+        const risk = feature.properties.risk_score || 0;
+        // Only draw high-risk roads to save DOM memory
+        if (risk >= 0.4) {
+          const path = feature.geometry.coordinates.map((c) => ({
+            lat: c[1],
+            lng: c[0],
+          }));
+          let color =
+            risk >= 0.8 ? "#ef4444" : risk >= 0.6 ? "#f97316" : "#eab308";
+
+          const polyline = new mapplsClassObject.Polyline({
+            map: mapInstance,
+            path: path,
+            strokeColor: color,
+            strokeWeight: 4,
+            strokeOpacity: 0.65,
+          });
+          roadLayerRefs.current.push(polyline);
+        }
+      });
     }
 
+    // --- DRAW AI DIVERSIONS ---
+    if (diversions && diversions.features) {
+      diversions.features.forEach((feature) => {
+        const path = feature.geometry.coordinates.map((c) => ({
+          lat: c[1],
+          lng: c[0],
+        }));
+        const polyline = new mapplsClassObject.Polyline({
+          map: mapInstance,
+          path: path,
+          strokeColor: "#3b82f6",
+          strokeWeight: 6,
+          strokeOpacity: isProcessing ? 0.4 : 1.0,
+        });
+        diversionLayerRefs.current.push(polyline);
+      });
+    }
+
+    // --- DRAW BARRICADES (Using Mappls HTML Markers) ---
+    if (barricades) {
+      barricades.forEach((coord) => {
+        const lng = coord.lon !== undefined ? coord.lon : coord[0];
+        const lat = coord.lat !== undefined ? coord.lat : coord[1];
+
+        // Convert React UI into a raw HTML string for the MapmyIndia engine
+        const barricadeHtml = renderToStaticMarkup(
+          <div className="relative flex items-center justify-center group cursor-pointer mt-4 ml-4">
+            <div className="absolute inset-0 bg-yellow-500/50 blur-md rounded-full animate-pulse"></div>
+            <div className="relative bg-gray-950 border border-yellow-500 text-yellow-500 px-2 py-1 rounded shadow-lg flex items-center gap-1 z-10">
+              <ShieldAlert size={14} />
+              <span className="text-[10px] font-mono font-bold whitespace-nowrap">
+                CLOSED
+              </span>
+            </div>
+          </div>,
+        );
+
+        const marker = new mapplsClassObject.Marker({
+          map: mapInstance,
+          position: { lat, lng },
+          html: barricadeHtml,
+        });
+        markerRefs.current.push(marker);
+      });
+    }
+
+    // --- DRAW SURGE EVENT PIN ---
     if (activeSurge && activeSurge.status !== "resolved") {
+      const lat = activeSurge.latitude || 12.9562;
+      const lng = activeSurge.longitude || 77.5383;
+
+      const surgeHtml = renderToStaticMarkup(
+        <div className="relative flex items-center justify-center mt-6 ml-6">
+          <div className="absolute w-16 h-16 bg-red-600/20 rounded-full animate-ping"></div>
+          <div className="bg-red-950 border-2 border-red-500 p-2 rounded-full shadow-[0_0_30px_rgba(239,68,68,1)] z-10">
+            <AlertTriangle className="text-red-500" size={28} />
+          </div>
+        </div>,
+      );
+
+      const surgeMarker = new mapplsClassObject.Marker({
+        map: mapInstance,
+        position: { lat, lng },
+        html: surgeHtml,
+      });
+      markerRefs.current.push(surgeMarker);
+
+      // Fallback pseudo-heatmap using Mappls Circle (Native Heatmaps require specific Mappls plugins)
       const intensity = activeSurge.z_score
         ? Math.min(activeSurge.z_score / 2, 1)
         : 0.8;
-      const heatmapData = {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            geometry: {
-              type: "Point",
-              coordinates: [
-                activeSurge.longitude || 77.5383,
-                activeSurge.latitude || 12.9562,
-              ],
-            },
-            properties: { risk: intensity },
-          },
-        ],
-      };
-
-      if (mapInstance.getSource("surge-heatmap")) {
-        mapInstance.getSource("surge-heatmap").setData(heatmapData);
-      } else {
-        mapInstance.addSource("surge-heatmap", {
-          type: "geojson",
-          data: heatmapData,
-        });
-        mapInstance.addLayer({
-          id: "surge-heatmap-layer",
-          type: "heatmap",
-          source: "surge-heatmap",
-          paint: {
-            "heatmap-weight": [
-              "interpolate",
-              ["linear"],
-              ["get", "risk"],
-              0,
-              0,
-              1,
-              1,
-            ],
-            "heatmap-color": [
-              "interpolate",
-              ["linear"],
-              ["heatmap-density"],
-              0,
-              "rgba(0,0,0,0)",
-              0.5,
-              "#eab308",
-              1,
-              "#ef4444",
-            ],
-            "heatmap-radius": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              10,
-              15,
-              15,
-              60,
-            ],
-            "heatmap-opacity": 0.8,
-          },
-        });
-      }
-    } else {
-      if (mapInstance.getLayer("surge-heatmap-layer"))
-        mapInstance.removeLayer("surge-heatmap-layer");
-      if (mapInstance.getSource("surge-heatmap"))
-        mapInstance.removeSource("surge-heatmap");
+      heatmapRef.current = new mapplsClassObject.Circle({
+        map: mapInstance,
+        center: { lat, lng },
+        radius: 400 * intensity, // Meters
+        fillColor: "#ef4444",
+        fillOpacity: 0.3,
+        strokeColor: "#ef4444",
+        strokeOpacity: 0.8,
+        strokeWeight: 1,
+      });
     }
   }, [
     roadMetrics,
     diversions,
+    barricades,
     activeSurge,
     isProcessing,
     mapInstance,
@@ -267,102 +241,11 @@ export default function BengaluruMap() {
           </h3>
         </div>
       )}
-
-      {/* Linked via Ref instead of static ID to guarantee React DOM synchronization */}
       <div
         id="mapmyindia-container"
         ref={mapContainerRef}
         className="absolute inset-0 w-full h-full"
       />
-
-      {/* TACTICAL EMERGENCY PIN */}
-      {!isMapLoading && mapInstance && activeSurge && (
-        <CustomMapMarker
-          map={mapInstance}
-          longitude={activeSurge.longitude || 77.5383}
-          latitude={activeSurge.latitude || 12.9562}
-        >
-          <div className="relative flex items-center justify-center">
-            <div className="absolute w-16 h-16 bg-red-600/20 rounded-full animate-ping"></div>
-            <div className="bg-red-950 border-2 border-red-500 p-2 rounded-full shadow-[0_0_30px_rgba(239,68,68,1)] z-10">
-              <AlertTriangle className="text-red-500" size={28} />
-            </div>
-          </div>
-        </CustomMapMarker>
-      )}
-
-      {/* TACTICAL ROAD BARRICADES */}
-      {!isMapLoading &&
-        mapInstance &&
-        barricades &&
-        barricades.map((coord, idx) => (
-          <CustomMapMarker
-            key={`barricade-${idx}`}
-            map={mapInstance}
-            longitude={coord[0]}
-            latitude={coord[1]}
-          >
-            <div className="relative flex items-center justify-center group cursor-pointer">
-              <div className="absolute inset-0 bg-yellow-500/50 blur-md rounded-full animate-pulse"></div>
-              <div className="relative bg-gray-950 border border-yellow-500 text-yellow-500 px-2 py-1 rounded shadow-lg flex items-center gap-2 z-10 transform hover:scale-110 transition-transform">
-                <ShieldAlert size={14} />
-                <span className="text-[10px] font-mono font-bold tracking-wider whitespace-nowrap">
-                  ROAD CLOSED
-                </span>
-              </div>
-            </div>
-          </CustomMapMarker>
-        ))}
-    </div>
-  );
-}
-
-// 5. Dynamic Screen Projection Synchronizer
-function CustomMapMarker({ map, longitude, latitude, children }) {
-  const [position, setPosition] = useState({ x: -1000, y: -1000 });
-
-  useEffect(() => {
-    if (!map) return;
-
-    const updatePosition = () => {
-      if (
-        longitude == null ||
-        latitude == null ||
-        isNaN(longitude) ||
-        isNaN(latitude)
-      )
-        return;
-
-      try {
-        const pos = map.project([longitude, latitude]);
-        if (pos && pos.x !== undefined && pos.y !== undefined) {
-          setPosition({ x: pos.x, y: pos.y });
-        }
-      } catch (err) {}
-    };
-
-    updatePosition();
-    map.on("move", updatePosition);
-    map.on("zoom", updatePosition);
-
-    return () => {
-      map.off("move", updatePosition);
-      map.off("zoom", updatePosition);
-    };
-  }, [map, longitude, latitude]);
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: position.x,
-        top: position.y,
-        transform: "translate(-50%, -50%)",
-        pointerEvents: "none",
-        zIndex: 20,
-      }}
-    >
-      <div style={{ pointerEvents: "auto" }}>{children}</div>
     </div>
   );
 }

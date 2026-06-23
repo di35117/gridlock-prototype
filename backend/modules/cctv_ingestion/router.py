@@ -1,34 +1,28 @@
-import json
+# backend/modules/cctv_ingestion/router.py
+from fastapi import APIRouter, Request
 import logging
-from fastapi import APIRouter, Request, HTTPException
-from modules.cctv_ingestion.models import CCTVResponse
-from modules.cctv_ingestion.tasks import process_cctv_task  # <-- Import the Celery task
 
+# Import the centralized Celery application from the root directory
+from tasks import celery_app
+
+router = APIRouter(prefix="/api/cctv", tags=["CCTV Ingestion"])
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/cctv", tags=["CCTV Integration Hub"])
 
-@router.post("/webhook", response_model=CCTVResponse)
-async def cctv_webhook(request: Request):  # <-- Removed background_tasks from signature
+@router.post("/webhook")
+async def receive_cctv_webhook(request: Request):
     """
-    Universal Plug-and-Play Webhook for CCTV Vision models.
-    Accepts valid JSON dictionaries and hands them off to the Celery/Redis queue.
+    Receives raw JSON telemetry from distributed CCTV nodes and instantly
+    dispatches it to the centralized Celery task queue, returning a 202 status.
     """
-    # Accept incoming JSON payload safely to prevent JSONDecodeError crashes
     try:
         raw_payload = await request.json()
-    except json.JSONDecodeError:
-        logger.error("Failed to decode incoming CCTV JSON payload.")
-        raise HTTPException(
-            status_code=400, 
-            detail="Invalid or empty JSON payload. Expected a valid JSON body."
-        )
-    
-    logger.info("Incoming CCTV vision payload detected. Routing to Celery queue...")
-    
-    # Dispatch to the distributed Celery worker queue instantly
-    process_cctv_task.delay(raw_payload)
-    
-    return CCTVResponse(
-        status="Accepted", 
-        message="CCTV payload safely queued in Redis broker. Autonomous processing initialized."
-    )
+        
+        # Enqueue the task to the central worker queue matching the decorator name in root tasks.py
+        celery_app.send_task("tasks.process_cctv_task", args=[raw_payload])
+        
+        logger.info("[CCTV Router] Successfully dispatched raw payload to Celery queue.")
+        return {"status": "accepted", "message": "CCTV payload queued for autonomous processing."}
+        
+    except Exception as e:
+        logger.error(f"[CCTV Router] Failed to queue incoming webhook: {e}")
+        return {"status": "error", "message": "Failed to accept payload or malformed JSON syntax."}

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Request
+import json
+import logging
+from fastapi import APIRouter, Request, HTTPException
 from modules.cctv_ingestion.models import CCTVResponse
 from modules.cctv_ingestion.tasks import process_cctv_task  # <-- Import the Celery task
-import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cctv", tags=["CCTV Integration Hub"])
@@ -12,8 +13,15 @@ async def cctv_webhook(request: Request):  # <-- Removed background_tasks from s
     Universal Plug-and-Play Webhook for CCTV Vision models.
     Accepts valid JSON dictionaries and hands them off to the Celery/Redis queue.
     """
-    # Accept incoming JSON payload
-    raw_payload = await request.json()
+    # Accept incoming JSON payload safely to prevent JSONDecodeError crashes
+    try:
+        raw_payload = await request.json()
+    except json.JSONDecodeError:
+        logger.error("Failed to decode incoming CCTV JSON payload.")
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid or empty JSON payload. Expected a valid JSON body."
+        )
     
     logger.info("Incoming CCTV vision payload detected. Routing to Celery queue...")
     

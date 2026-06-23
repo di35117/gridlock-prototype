@@ -1,4 +1,3 @@
-// src/components/LiveIntelFeed.jsx
 import React from "react";
 import { useSystemStore } from "../store/useSystemStore";
 import { AlertTriangle, Radio, Video, Activity } from "lucide-react";
@@ -23,27 +22,29 @@ export default function LiveIntelFeed() {
   };
 
   return (
-    <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col h-full shadow-2xl z-20">
-      <div className="p-3 bg-gray-950 border-b border-gray-800 flex items-center justify-between">
-        <h3 className="text-xs font-bold text-gray-400 tracking-widest flex items-center">
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></span>
-          LIVE INTEL STREAM
+    <div className="w-80 bg-gray-900 border-l border-gray-700 flex flex-col h-full overflow-hidden">
+      <div className="p-4 border-b border-gray-700 flex items-center justify-between bg-gray-950">
+        <h3 className="text-xs font-black tracking-widest font-mono text-gray-400 flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+          REALTIME STREAM FEED
         </h3>
-        <span className="text-[10px] bg-gray-800 px-2 py-0.5 rounded text-gray-500">
-          {intelFeed.length} EVENTS
+        <span className="text-[10px] font-mono font-bold text-gray-500 bg-gray-800 px-2 py-0.5 rounded">
+          {intelFeed.length} EVENTS ACTIVE
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
         {intelFeed.length === 0 ? (
-          <div className="text-center text-gray-600 text-xs mt-10 font-mono">
-            Awaiting sensor telemetry...
+          <div className="h-full flex flex-col items-center justify-center text-center p-4">
+            <Radio size={24} className="text-gray-600 animate-pulse mb-2" />
+            <p className="text-xs font-mono text-gray-500">
+              AWAITING SENSOR SIGNALS ON RADAR TUNNEL...
+            </p>
           </div>
         ) : (
-          intelFeed.map((alert, idx) => (
+          intelFeed.map((alert, index) => (
             <div
-              key={idx}
-              // Clicking an older alert refocuses the dashboard on it!
+              key={alert.id || index}
               onClick={() => triggerSurgeResponse(alert.payload || alert)}
               className={`p-3 rounded border text-sm cursor-pointer hover:bg-gray-800 transition-colors animate-fade-in ${getBorderColor(alert.risk_level)}`}
             >

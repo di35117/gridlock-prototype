@@ -14,18 +14,29 @@ logger = logging.getLogger(__name__)
 _GEOJSON_CACHE = None
 _MEM_GRAPH = None
 
+
 def init_routing_graph():
+    """
+    Synchronous baseline loader called explicitly on app startup.
+    Because we use a binary pickle file, this takes <1s instead of 30s
+    and avoids re-parsing GraphML XML on every cold start.
+    """
     global _MEM_GRAPH
     if _MEM_GRAPH is None:
-        logger.info(f"[STARTUP] Warm-up: Loading Binary Graph into RAM from {BENGALURU_GRAPH_CACHE}...")
+        logger.info(f"[STARTUP] Warm-up: Loading binary graph into RAM from {BENGALURU_GRAPH_CACHE}...")
         try:
             with open(BENGALURU_GRAPH_CACHE, 'rb') as f:
                 _MEM_GRAPH = pickle.load(f)
-            logger.info("[STARTUP] Success: Bengaluru road network cached in memory via Pickle.")
+            logger.info("[STARTUP] Success: Bengaluru road network cached in memory via pickle.")
         except Exception as crash_err:
-            logger.critical(f"[STARTUP] Critical Failure parsing Pickle file: {crash_err}")
+            logger.critical(f"[STARTUP] Critical failure loading pickle file: {crash_err}")
+
 
 async def _get_graph() -> nx.MultiDiGraph:
+    """
+    API accessor: returns the pre-loaded global graph instance instantly.
+    Lazy-loads the pickle file if init_routing_graph() wasn't called first.
+    """
     global _MEM_GRAPH
     if _MEM_GRAPH is None:
         logger.warning("[PERFORMANCE WARNING] Graph was not pre-warmed on startup! Loading lazily...")
@@ -39,7 +50,9 @@ async def _get_graph() -> nx.MultiDiGraph:
             raise e
     return _MEM_GRAPH
 
+
 async def _get_corridor_risks() -> Dict[str, float]:
+    """Fetches real-time AI risk scores for all known corridors."""
     risks = {}
     try:
         async with AsyncSessionLocal() as session:
@@ -51,22 +64,23 @@ async def _get_corridor_risks() -> Dict[str, float]:
         logger.error(f"Error fetching risk scores: {e}")
     return risks
 
+
 async def generate_network_metrics_geojson() -> dict:
     global _GEOJSON_CACHE
-    
+
     if _GEOJSON_CACHE is not None:
         return {"type": "FeatureCollection", "features": _GEOJSON_CACHE}
 
     G = await _get_graph()
     risks = await _get_corridor_risks()
     features = []
-    
+
     allowed_highways = ['primary', 'secondary', 'trunk', 'motorway', 'primary_link', 'secondary_link']
 
     for u, v, key, data in G.edges(keys=True, data=True):
         if 'geometry' in data:
             highway_type = data.get('highway', '')
-            
+
             if isinstance(highway_type, list):
                 if not any(h in allowed_highways for h in highway_type):
                     continue
@@ -77,10 +91,10 @@ async def generate_network_metrics_geojson() -> dict:
             name = data.get('name', 'Unknown')
             if isinstance(name, list):
                 name = name[0]
-                
+
             normalized_name = str(name).strip().lower()
             risk_score = risks.get(normalized_name, 0.0)
-            
+
             # --- HACKATHON DEMO OVERRIDES ---
             if "mysore" in normalized_name or "mysuru" in normalized_name:
                 risk_score = max(risk_score, 0.95)
@@ -90,7 +104,7 @@ async def generate_network_metrics_geojson() -> dict:
                 risk_score = max(risk_score, 0.60)
 
             coords = list(data['geometry'].coords)
-            
+
             feature = {
                 "type": "Feature",
                 "properties": {
@@ -108,9 +122,10 @@ async def generate_network_metrics_geojson() -> dict:
     _GEOJSON_CACHE = features
     return {"type": "FeatureCollection", "features": features}
 
+
 async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float, d_lat: float, d_lon: float) -> dict:
     G = await _get_graph()
-    
+
     try:
         orig_node = ox.distance.nearest_nodes(G, X=o_lon, Y=o_lat)
         dest_node = ox.distance.nearest_nodes(G, X=d_lon, Y=d_lat)
@@ -126,22 +141,36 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
         for u, v, k in G_tactical.edges(keys=True):
             if u in blocked_nodes or v in blocked_nodes:
                 edges_to_remove.append((u, v, k))
-        
+
         G_tactical.remove_edges_from(edges_to_remove)
 
-        route_nodes = nx.shortest_path(G_tactical, orig_node, dest_node, weight='length')
-        
+        # FIX: fall back to a forced path through construction instead of
+        # returning no route at all when the safe graph disconnects origin
+        # from destination. NetworkXNoPath and NodeNotFound are sibling
+        # exception classes (confirmed by testing earlier in this thread),
+        # not a subclass relationship, so both need catching here.
+        try:
+            route_nodes = nx.shortest_path(G_tactical, orig_node, dest_node, weight='length')
+            status = "Optimal Diversion Found"
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            logger.warning(f"No safe path avoiding construction near {corridor}. Forcing path through it.")
+            route_nodes = nx.shortest_path(G, orig_node, dest_node, weight='length')
+            status = "Warning: Forced Path (Construction Unavoidable)"
+
         route_coords = []
         barricade_points = []
-        
-        for idx, node_id in enumerate(route_nodes):
-            node_data = G_tactical.nodes[node_id]
+
+        for node_id in route_nodes:
+            node_data = G.nodes[node_id]
             route_coords.append((node_data['x'], node_data['y']))
-            
-            # FIXED: Checks incoming AND outgoing severed edges symmetrically
+
+            # FIX: G.neighbors() on a directed MultiDiGraph only returns
+            # successors, silently missing nodes that lost an INCOMING edge
+            # from a blocked node. edges_to_remove above treats both
+            # directions symmetrically, so this comparison needs to as well.
             original_neighbors = list(nx.all_neighbors(G, node_id))
             tactical_neighbors = list(nx.all_neighbors(G_tactical, node_id))
-            
+
             if len(original_neighbors) > len(tactical_neighbors):
                 barricade_points.append({"lat": node_data['y'], "lon": node_data['x']})
 
@@ -155,18 +184,19 @@ async def calculate_tactical_diversion(corridor: str, o_lat: float, o_lon: float
         }
 
         return {
-            "status": "Optimal Diversion Found",
+            "status": status,
             "route_geojson": route_geojson,
             "barricade_points": barricade_points,
             "blocked_construction_nodes": len(blocked_nodes)
         }
 
     except nx.NetworkXNoPath:
-        logger.warning(f"No valid diversion found around {corridor}. Total Gridlock likely.")
+        logger.warning(f"No path exists at all near {corridor}. Total gridlock.")
         return {"status": "Gridlock - No Path", "route_geojson": None, "barricade_points": []}
     except Exception as e:
         logger.error(f"Routing Error: {e}")
         return {"status": "Error", "route_geojson": None, "barricade_points": []}
+
 
 async def _get_construction_coordinates(corridor: str) -> list[tuple[float, float]]:
     coords = []
